@@ -113,8 +113,67 @@
 	opacity: 1;
 }
 
+.cammvas-canvas-collapse-button[data-state="collapsed"]::after {
+	content: attr(data-descendant-count);
+	position: absolute;
+	top: 50%;
+	left: calc(100% + 4px);
+	transform: translateY(-50%);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 5px;
+	border: 1px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+	border-radius: 999px;
+	background: var(--background-primary);
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+	color: var(--interactive-accent);
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1;
+	pointer-events: none;
+}
+
 .canvas-wrapper .cammvas-canvas-branch-hidden {
 	display: none;
+}
+
+/* Cards grow to their complete content height; suppress internal scrollbars. */
+.canvas-wrapper .canvas-node-content {
+	overflow: hidden !important;
+}
+
+.canvas-wrapper .canvas-node-content .markdown-embed-content,
+.canvas-wrapper .canvas-node-content .markdown-preview-view {
+	overflow: hidden !important;
+	max-height: none !important;
+	scrollbar-gutter: auto;
+}
+
+.canvas-wrapper .canvas-node .cm-scroller,
+.cammvas-editor-scroller {
+	overflow: hidden !important;
+	scrollbar-width: none !important;
+}
+
+.canvas-wrapper .canvas-node .cm-scroller::-webkit-scrollbar,
+.cammvas-editor-scroller::-webkit-scrollbar {
+	display: none !important;
+}
+
+.canvas-wrapper
+	.canvas-node-content.markdown-embed
+	> .markdown-embed-content
+	> .markdown-preview-view::before,
+.canvas-wrapper
+	.canvas-node-content.markdown-embed
+	> .markdown-embed-content
+	> .markdown-preview-view::after {
+	min-height: 12px;
+	max-height: 12px;
+	flex: 0 0 12px;
 }
 
 .canvas-node.cammvas-reparent-drop-target {

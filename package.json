@@ -1,6 +1,6 @@
 {
-	"name": "cammvas",
-	"version": "1.2.29",
+	"name": "cammvas-plus",
+	"version": "1.3.0",
 	"description": "Dedicated mind-mapping workflows inside Obsidian Canvas",
 	"main": "main.js",
 	"scripts": {
@@ -15,13 +15,13 @@
 		"mind-map",
 		"mind-mapping"
 	],
-	"author": "cuatrecasespro",
+	"author": "epiphany-li",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/cuatrecasespro/cammvas.git"
+		"url": "https://github.com/epiphany-li/cammvas-plus.git"
 	},
-	"bugs": "https://github.com/cuatrecasespro/cammvas/issues",
-	"homepage": "https://github.com/cuatrecasespro/cammvas#readme",
+	"bugs": "https://github.com/epiphany-li/cammvas-plus/issues",
+	"homepage": "https://github.com/epiphany-li/cammvas-plus#readme",
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^20.11.0",

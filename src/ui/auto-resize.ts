@@ -3,7 +3,6 @@ import { isDomNode, isHtmlElement } from "./dom";
 
 interface AutoResizeConfig {
 	minHeight: number;
-	maxHeight: number;
 }
 
 /**
@@ -16,10 +15,11 @@ export function getEditorElements(node: CanvasNode): {
 	cmContent: HTMLElement | null;
 } {
 	const iframe = node.contentEl?.querySelector<HTMLIFrameElement>("iframe");
-	if (!iframe?.contentDocument) return { iframe: null, scroller: null, cmContent: null };
+	const container = iframe?.contentDocument ?? node.contentEl;
+	if (!container) return { iframe: null, scroller: null, cmContent: null };
 
-	const scroller = iframe.contentDocument.querySelector<HTMLElement>(".cm-scroller");
-	const cmContent = iframe.contentDocument.querySelector<HTMLElement>(".cm-content");
+	const scroller = container.querySelector<HTMLElement>(".cm-scroller");
+	const cmContent = container.querySelector<HTMLElement>(".cm-content");
 	return { iframe, scroller, cmContent };
 }
 
@@ -36,7 +36,7 @@ export interface AutoResizeHandle {
 
 /**
  * Registers auto-resize behavior for canvas nodes:
- * - While editing: node grows to fit content (up to maxHeight), never shrinks.
+ * - While editing: node grows to fit complete content and never shrinks.
  * - On natural exit (focusout): calls onEditExit callback after a delay
  *   to let the preview sizer render, enabling resize + relayout.
  * - On command exit (finalizeNode): cleanup only, no relayout.
@@ -45,11 +45,13 @@ export interface AutoResizeHandle {
 export function registerAutoResize(
 	canvas: Canvas,
 	config: AutoResizeConfig,
-	onEditExit?: (canvas: Canvas, node: CanvasNode) => void
+	onEditExit?: (canvas: Canvas, node: CanvasNode) => void,
+	onTextChange?: (canvas: Canvas, node: CanvasNode) => void
 ): AutoResizeHandle {
 	let activeNode: CanvasNode | null = null;
 	let observer: MutationObserver | null = null;
 	let inputHandler: (() => void) | null = null;
+	let keydownHandler: ((event: KeyboardEvent) => void) | null = null;
 	/** Cached DOM refs to avoid querySelector on every keystroke */
 	let cachedCmContent: HTMLElement | null = null;
 	let cachedScroller: HTMLElement | null = null;
@@ -61,9 +63,13 @@ export function registerAutoResize(
 	function onContentChange(): void {
 		if (!activeNode || !cachedScroller || !cachedCmContent) return;
 
-		const contentH = cachedCmContent.offsetHeight;
+		const contentH = Math.max(
+			cachedCmContent.scrollHeight,
+			cachedCmContent.offsetHeight,
+			cachedCmContent.getBoundingClientRect().height
+		);
 		const chrome = activeNode.height - cachedScroller.clientHeight;
-		const targetH = Math.min(Math.max(contentH + chrome, config.minHeight), config.maxHeight);
+		const targetH = Math.max(Math.ceil(contentH + chrome + 12), config.minHeight);
 
 		// Only grow, never shrink during editing
 		if (targetH > activeNode.height) {
@@ -84,12 +90,17 @@ export function registerAutoResize(
 		activeNode = node;
 		cachedCmContent = cmContent;
 		cachedScroller = scroller;
+		scroller?.classList.add("cammvas-editor-scroller");
 
 		// Observe inside the iframe where actual editing happens
+		const handleMutation = () => {
+			onContentChange();
+			onTextChange?.(canvas, node);
+		};
 		const observeTarget = cmContent ?? iframe?.contentDocument?.body;
 		if (observeTarget) {
 			const Observer = Reflect.get(observeTarget.win, "MutationObserver") as typeof MutationObserver;
-			const nextObserver = new Observer(onContentChange);
+			const nextObserver = new Observer(handleMutation);
 			nextObserver.observe(observeTarget, {
 				childList: true,
 				subtree: true,
@@ -98,7 +109,7 @@ export function registerAutoResize(
 			observer = nextObserver;
 		} else {
 			const Observer = Reflect.get(node.contentEl.win, "MutationObserver") as typeof MutationObserver;
-			const nextObserver = new Observer(onContentChange);
+			const nextObserver = new Observer(handleMutation);
 			nextObserver.observe(node.contentEl, {
 				childList: true,
 				subtree: true,
@@ -108,12 +119,20 @@ export function registerAutoResize(
 		}
 
 		cachedInputTarget = iframe?.contentDocument ?? node.contentEl;
-		const handler = () => onContentChange();
+		const handler = () => {
+			onContentChange();
+			onTextChange?.(canvas, node);
+		};
 		inputHandler = handler;
 		cachedInputTarget.addEventListener("input", handler);
+		keydownHandler = (event: KeyboardEvent) => {
+			if (event.key === "Enter") onTextChange?.(canvas, node);
+		};
+		cachedInputTarget.addEventListener("keydown", keydownHandler, true);
 
 		// Measure immediately in case existing content already overflows
 		onContentChange();
+		onTextChange?.(canvas, node);
 	}
 
 	function stopWatching(triggerRelayout: boolean = true): void {
@@ -126,11 +145,16 @@ export function registerAutoResize(
 		if (inputHandler && cachedInputTarget) {
 			cachedInputTarget.removeEventListener("input", inputHandler);
 		}
+		if (keydownHandler && cachedInputTarget) {
+			cachedInputTarget.removeEventListener("keydown", keydownHandler, true);
+		}
+		cachedScroller?.classList.remove("cammvas-editor-scroller");
 
 		// Reset state
 		activeNode = null;
 		observer = null;
 		inputHandler = null;
+		keydownHandler = null;
 		cachedCmContent = null;
 		cachedScroller = null;
 		cachedInputTarget = null;

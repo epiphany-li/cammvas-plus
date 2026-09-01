@@ -5248,9 +5248,9 @@ var LayoutEngine = class {
     return contour;
   }
   /**
-   * Pack an array of subtrees vertically using contour comparison.
-   * First subtree stays at y=0; each subsequent one is shifted down
-   * just enough to clear the combined contour at all shared depths.
+   * Pack sibling subtrees as non-overlapping vertical blocks. This leaves a
+   * reliable pointer gap between complete branches instead of allowing the
+   * descendants of adjacent siblings to interleave visually.
    */
   packSubtrees(subtrees) {
     if (subtrees.length === 0) {
@@ -5263,14 +5263,13 @@ var LayoutEngine = class {
     }
     for (let i3 = 1; i3 < subtrees.length; i3++) {
       const sub = subtrees[i3];
-      let shift = 0;
-      for (const [d, ext] of sub.contour) {
-        const prev = combinedContour.get(d);
-        if (prev !== void 0) {
-          const needed = prev.bottom + this.config.verticalGap - ext.top;
-          if (needed > shift) shift = needed;
-        }
-      }
+      const previousBottom = Math.max(
+        ...Array.from(combinedContour.values(), (extent) => extent.bottom)
+      );
+      const subtreeTop = Math.min(
+        ...Array.from(sub.contour.values(), (extent) => extent.top)
+      );
+      const shift = previousBottom + this.config.verticalGap - subtreeTop;
       yOffsets.push(shift);
       for (const [d, ext] of sub.contour) {
         const shifted = { top: ext.top + shift, bottom: ext.bottom + shift };
@@ -5599,6 +5598,7 @@ function registerBranchCollapse(canvas, canvasApi) {
       "aria-label",
       `${collapsed ? "Expand" : "Collapse"} branch (${descendantCount} descendant${descendantCount === 1 ? "" : "s"})`
     );
+    button.dataset.descendantCount = String(descendantCount);
   };
   const setEdgeHidden = (edge, hidden) => {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
@@ -6360,7 +6360,6 @@ var DEFAULT_SETTINGS = {
   verticalGap: 40,
   defaultNodeWidth: 300,
   defaultNodeHeight: 60,
-  maxNodeHeight: 300,
   defaultMindmapMode: true,
   navigationZoomPadding: 200,
   mouseNavigation: false
@@ -6383,7 +6382,6 @@ var POSITIVE_NUMBER_SETTING_KEYS = [
   "verticalGap",
   "defaultNodeWidth",
   "defaultNodeHeight",
-  "maxNodeHeight",
   "edgeLabelFontSize"
 ];
 function isSettingsData(value) {
@@ -6448,7 +6446,6 @@ var MindMapSettingTab = class extends import_obsidian4.PluginSettingTab {
       { name: "Vertical gap", desc: "Space between sibling nodes (px)", control: positiveNumber("verticalGap") },
       { name: "Default node width", desc: "Width of newly created nodes (px)", control: positiveNumber("defaultNodeWidth") },
       { name: "Default node height", desc: "Height of newly created nodes (px)", control: positiveNumber("defaultNodeHeight") },
-      { name: "Max node height", desc: "Maximum height a node can grow to before scrolling (px)", control: positiveNumber("maxNodeHeight") },
       { name: "Mouse back/forward navigation", desc: "Use mouse back/forward buttons for in-canvas navigation instead of Obsidian's default note navigation", visible: () => !import_obsidian4.Platform.isMobile, control: { type: "toggle", key: "mouseNavigation" } },
       { name: "Navigation zoom padding", desc: "Extra space around the target node when zooming after navigation (px). 0 = tight zoom.", control: { type: "number", key: "navigationZoomPadding", min: 0, step: 1, validate: (value) => value >= 0 ? void 0 : "Enter zero or a positive number." } }
     ];
@@ -6848,6 +6845,102 @@ function registerAutoLayoutOnMove(canvas, canvasApi, isEnabled, onSettled) {
     if (canvas.handleSelectionDrag === replacement) {
       canvas.handleSelectionDrag = original;
     }
+  };
+}
+
+// src/canvas/node-resize.ts
+function syncWidthsAtSameDepth(canvas, resizedNodes) {
+  const forest = buildForest(canvas);
+  const widthByLevel = /* @__PURE__ */ new Map();
+  for (const node of resizedNodes) {
+    const treeNode = findTreeForNode(forest, node.id);
+    if (!treeNode) continue;
+    let root = treeNode;
+    while (root.parent) root = root.parent;
+    widthByLevel.set(`${root.canvasNode.id}:${treeNode.depth}`, {
+      root,
+      depth: treeNode.depth,
+      width: node.width
+    });
+  }
+  const affected = /* @__PURE__ */ new Map();
+  let changed = false;
+  for (const { root, depth, width } of widthByLevel.values()) {
+    for (const treeNode of [root, ...getDescendants(root)]) {
+      if (treeNode.depth !== depth) continue;
+      const node = treeNode.canvasNode;
+      affected.set(node.id, node);
+      if (Math.abs(node.width - width) < 1) continue;
+      node.moveAndResize({
+        x: node.x,
+        y: node.y,
+        width,
+        height: node.height
+      });
+      changed = true;
+    }
+  }
+  if (changed) canvas.requestSave();
+  return Array.from(affected.values());
+}
+function registerNodeResizeHandler(canvas, isEnabled, onSettled) {
+  const wrapper = canvas.wrapperEl;
+  const win = wrapper.win;
+  let resizeState = null;
+  let settleRaf = 0;
+  const onPointerDown = (event) => {
+    const target = event.target;
+    if (!isHtmlElement(target) || !target.closest(".canvas-node-resizer")) return;
+    if (!isEnabled()) return;
+    const groupIds = getGroupIds(canvas);
+    const nodes = Array.from(canvas.selection).map((item) => canvas.nodes.get(item.id)).filter((node) => !!node && !groupIds.has(node.id));
+    if (nodes.length === 0) return;
+    resizeState = {
+      pointerId: event.pointerId,
+      sizes: new Map(nodes.map((node) => [node.id, {
+        width: node.width,
+        height: node.height
+      }]))
+    };
+  };
+  const finishResize = (event) => {
+    const state = resizeState;
+    if (!state || event.pointerId !== state.pointerId) return;
+    resizeState = null;
+    if (settleRaf) win.cancelAnimationFrame(settleRaf);
+    settleRaf = win.requestAnimationFrame(() => {
+      settleRaf = 0;
+      if (!isEnabled()) return;
+      const resizedNodes = [];
+      const widthChangedNodeIds = /* @__PURE__ */ new Set();
+      for (const [nodeId, size] of state.sizes) {
+        const node = canvas.nodes.get(nodeId);
+        if (node && Math.abs(node.width - size.width) >= 1) {
+          widthChangedNodeIds.add(node.id);
+        }
+        if (node && (Math.abs(node.width - size.width) >= 1 || Math.abs(node.height - size.height) >= 1)) resizedNodes.push(node);
+      }
+      if (resizedNodes.length > 0) onSettled({
+        nodes: resizedNodes,
+        widthChangedNodeIds
+      });
+    });
+  };
+  const cancelResize = (event) => {
+    if (resizeState && event.pointerId === resizeState.pointerId) resizeState = null;
+  };
+  wrapper.addEventListener("pointerdown", onPointerDown, true);
+  win.addEventListener("pointerup", finishResize, true);
+  win.addEventListener("pointercancel", cancelResize, true);
+  win.addEventListener("lostpointercapture", cancelResize, true);
+  return () => {
+    resizeState = null;
+    if (settleRaf) win.cancelAnimationFrame(settleRaf);
+    settleRaf = 0;
+    wrapper.removeEventListener("pointerdown", onPointerDown, true);
+    win.removeEventListener("pointerup", finishResize, true);
+    win.removeEventListener("pointercancel", cancelResize, true);
+    win.removeEventListener("lostpointercapture", cancelResize, true);
   };
 }
 
@@ -22602,18 +22695,20 @@ var PdfExportModal = class extends import_obsidian6.Modal {
 
 // src/ui/auto-resize.ts
 function getEditorElements(node) {
-  var _a;
+  var _a, _b;
   const iframe = (_a = node.contentEl) == null ? void 0 : _a.querySelector("iframe");
-  if (!(iframe == null ? void 0 : iframe.contentDocument)) return { iframe: null, scroller: null, cmContent: null };
-  const scroller = iframe.contentDocument.querySelector(".cm-scroller");
-  const cmContent = iframe.contentDocument.querySelector(".cm-content");
+  const container = (_b = iframe == null ? void 0 : iframe.contentDocument) != null ? _b : node.contentEl;
+  if (!container) return { iframe: null, scroller: null, cmContent: null };
+  const scroller = container.querySelector(".cm-scroller");
+  const cmContent = container.querySelector(".cm-content");
   return { iframe, scroller, cmContent };
 }
-function registerAutoResize(canvas, config, onEditExit) {
+function registerAutoResize(canvas, config, onEditExit, onTextChange) {
   var _a, _b, _c;
   let activeNode = null;
   let observer = null;
   let inputHandler = null;
+  let keydownHandler = null;
   let cachedCmContent = null;
   let cachedScroller = null;
   let cachedInputTarget = null;
@@ -22621,9 +22716,13 @@ function registerAutoResize(canvas, config, onEditExit) {
   const win = canvas.wrapperEl.win;
   function onContentChange() {
     if (!activeNode || !cachedScroller || !cachedCmContent) return;
-    const contentH = cachedCmContent.offsetHeight;
+    const contentH = Math.max(
+      cachedCmContent.scrollHeight,
+      cachedCmContent.offsetHeight,
+      cachedCmContent.getBoundingClientRect().height
+    );
     const chrome = activeNode.height - cachedScroller.clientHeight;
-    const targetH = Math.min(Math.max(contentH + chrome, config.minHeight), config.maxHeight);
+    const targetH = Math.max(Math.ceil(contentH + chrome + 12), config.minHeight);
     if (targetH > activeNode.height) {
       activeNode.moveAndResize({
         x: activeNode.x,
@@ -22641,10 +22740,15 @@ function registerAutoResize(canvas, config, onEditExit) {
     activeNode = node;
     cachedCmContent = cmContent;
     cachedScroller = scroller;
+    scroller == null ? void 0 : scroller.classList.add("cammvas-editor-scroller");
+    const handleMutation = () => {
+      onContentChange();
+      onTextChange == null ? void 0 : onTextChange(canvas, node);
+    };
     const observeTarget = cmContent != null ? cmContent : (_a2 = iframe == null ? void 0 : iframe.contentDocument) == null ? void 0 : _a2.body;
     if (observeTarget) {
       const Observer = Reflect.get(observeTarget.win, "MutationObserver");
-      const nextObserver = new Observer(onContentChange);
+      const nextObserver = new Observer(handleMutation);
       nextObserver.observe(observeTarget, {
         childList: true,
         subtree: true,
@@ -22653,7 +22757,7 @@ function registerAutoResize(canvas, config, onEditExit) {
       observer = nextObserver;
     } else {
       const Observer = Reflect.get(node.contentEl.win, "MutationObserver");
-      const nextObserver = new Observer(onContentChange);
+      const nextObserver = new Observer(handleMutation);
       nextObserver.observe(node.contentEl, {
         childList: true,
         subtree: true,
@@ -22662,10 +22766,18 @@ function registerAutoResize(canvas, config, onEditExit) {
       observer = nextObserver;
     }
     cachedInputTarget = (_b2 = iframe == null ? void 0 : iframe.contentDocument) != null ? _b2 : node.contentEl;
-    const handler = () => onContentChange();
+    const handler = () => {
+      onContentChange();
+      onTextChange == null ? void 0 : onTextChange(canvas, node);
+    };
     inputHandler = handler;
     cachedInputTarget.addEventListener("input", handler);
+    keydownHandler = (event) => {
+      if (event.key === "Enter") onTextChange == null ? void 0 : onTextChange(canvas, node);
+    };
+    cachedInputTarget.addEventListener("keydown", keydownHandler, true);
     onContentChange();
+    onTextChange == null ? void 0 : onTextChange(canvas, node);
   }
   function stopWatching(triggerRelayout = true) {
     if (!activeNode) return;
@@ -22675,9 +22787,14 @@ function registerAutoResize(canvas, config, onEditExit) {
     if (inputHandler && cachedInputTarget) {
       cachedInputTarget.removeEventListener("input", inputHandler);
     }
+    if (keydownHandler && cachedInputTarget) {
+      cachedInputTarget.removeEventListener("keydown", keydownHandler, true);
+    }
+    cachedScroller == null ? void 0 : cachedScroller.classList.remove("cammvas-editor-scroller");
     activeNode = null;
     observer = null;
     inputHandler = null;
+    keydownHandler = null;
     cachedCmContent = null;
     cachedScroller = null;
     cachedInputTarget = null;
@@ -22752,7 +22869,7 @@ async function copyText(win, text, successMessage) {
 }
 
 // src/ui/outline-view.ts
-var OUTLINE_VIEW_TYPE = "cammvas-outline";
+var OUTLINE_VIEW_TYPE = "cammvas-plus-outline";
 var OutlineView = class extends import_obsidian8.ItemView {
   constructor(leaf) {
     super(leaf);
@@ -23089,7 +23206,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
           const canvasPath = canvas.view.file.path;
           void copyText(
             self.win,
-            `obsidian://cammvas-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${root.canvasNode.id}`,
+            `obsidian://cammvas-plus-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${root.canvasNode.id}`,
             "Node link copied"
           );
         });
@@ -23141,7 +23258,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
           const canvasPath = canvas.view.file.path;
           void copyText(
             self.win,
-            `obsidian://cammvas-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${node.canvasNode.id}`,
+            `obsidian://cammvas-plus-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${node.canvasNode.id}`,
             "Node link copied"
           );
         });
@@ -23613,6 +23730,87 @@ function registerMobileEditingBar(canvas, isEnabled, canAddSibling, onAddChild, 
   };
 }
 
+// src/ui/ordered-list-renumber.ts
+function countIndentColumns(indent) {
+  let columns = 0;
+  for (const character of indent) {
+    columns = character === "	" ? columns + (4 - columns % 4) : columns + 1;
+  }
+  return columns;
+}
+function computeOrderedListRenumberChanges(text) {
+  const changes = [];
+  const frames = [];
+  const lines = text.split("\n");
+  let offset = 0;
+  let blankSinceContent = false;
+  let fence = null;
+  for (const line of lines) {
+    const fenceMatch = line.match(/^([ \t]*)(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      if (fenceMatch && fenceMatch[2][0] === fence.character && fenceMatch[2].length >= fence.length) fence = null;
+      offset += line.length + 1;
+      continue;
+    }
+    if (fenceMatch) {
+      const fenceIndent = countIndentColumns(fenceMatch[1]);
+      if (blankSinceContent && frames.length > 0) {
+        while (frames.length > 0 && frames[frames.length - 1].indent >= fenceIndent) frames.pop();
+      }
+      fence = { character: fenceMatch[2][0], length: fenceMatch[2].length };
+      blankSinceContent = false;
+      offset += line.length + 1;
+      continue;
+    }
+    if (/^[ \t]*\r?$/.test(line)) {
+      blankSinceContent = true;
+      offset += line.length + 1;
+      continue;
+    }
+    const ordered = line.match(/^([ \t]*)(\d{1,9})([.)])(?:[ \t]+|(?=\r?$))/);
+    const unordered = ordered ? null : line.match(/^([ \t]*)([-+*])(?:[ \t]+|(?=\r?$))/);
+    if (ordered || unordered) {
+      const indentText = ordered ? ordered[1] : unordered[1];
+      const indent = countIndentColumns(indentText);
+      if (frames.length === 0 && indent >= 4) {
+        blankSinceContent = false;
+        offset += line.length + 1;
+        continue;
+      }
+      while (frames.length > 0 && frames[frames.length - 1].indent > indent) frames.pop();
+      const kind = ordered ? "ordered" : "unordered";
+      const delimiter = ordered ? ordered[3] : unordered[2];
+      let frame = frames[frames.length - 1];
+      if (!frame || frame.indent !== indent || frame.kind !== kind || frame.delimiter !== delimiter) {
+        if (frame && frame.indent === indent) frames.pop();
+        frame = { indent, kind, delimiter, next: ordered ? Number(ordered[2]) + 1 : 0 };
+        frames.push(frame);
+      } else if (ordered) {
+        const expected = frame.next;
+        if (Number(ordered[2]) !== expected) {
+          const from = offset + ordered[1].length;
+          changes.push({ from, to: from + ordered[2].length, insert: String(expected) });
+        }
+        frame.next = expected + 1;
+      }
+      blankSinceContent = false;
+      offset += line.length + 1;
+      continue;
+    }
+    if (frames.length > 0) {
+      const indentMatch = line.match(/^[ \t]*/);
+      const indent = countIndentColumns(indentMatch ? indentMatch[0] : "");
+      const startsBlock = /^([ \t]*)(#{1,6}[ \t]+|>|(?:-{3,}|\*{3,}|_{3,})[ \t]*\r?$|<\/?[A-Za-z])/u.test(line);
+      if (blankSinceContent || startsBlock) {
+        while (frames.length > 0 && frames[frames.length - 1].indent >= indent) frames.pop();
+      }
+    }
+    blankSinceContent = false;
+    offset += line.length + 1;
+  }
+  return changes;
+}
+
 // src/import/freemind-import.ts
 function parseFreeMindXml(xml) {
   const parser = new DOMParser();
@@ -23641,7 +23839,7 @@ function parseNode(el, inheritedPosition) {
   }
   return { text, position, children };
 }
-function estimateNodeHeight(text, nodeWidth, minHeight, maxHeight) {
+function estimateNodeHeight(text, nodeWidth, minHeight) {
   const AVG_CHAR_WIDTH = 8;
   const LINE_HEIGHT = 22;
   const PADDING2 = 20;
@@ -23656,10 +23854,10 @@ function estimateNodeHeight(text, nodeWidth, minHeight, maxHeight) {
     }
   }
   const estimated = totalLines * LINE_HEIGHT + PADDING2;
-  return Math.min(Math.max(estimated, minHeight), maxHeight);
+  return Math.max(estimated, minHeight);
 }
 function nodeHeight(node, opts) {
-  return estimateNodeHeight(node.text, opts.nodeWidth, opts.nodeHeight, opts.maxNodeHeight);
+  return estimateNodeHeight(node.text, opts.nodeWidth, opts.nodeHeight);
 }
 function subtreeHeight(node, opts) {
   if (node.children.length === 0) return nodeHeight(node, opts);
@@ -23784,6 +23982,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.cleanupDragReparentHandler = null;
     this.cleanupGroupDragHandler = null;
     this.cleanupAutoLayoutOnMoveHandler = null;
+    this.cleanupNodeResizeHandler = null;
     this.autoResizeHandle = null;
     this.branchCollapseHandle = null;
     this.interceptedCanvas = null;
@@ -23802,6 +24001,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.pendingTimers = /* @__PURE__ */ new Set();
     this.pendingRafs = /* @__PURE__ */ new Set();
     this.pendingObservers = /* @__PURE__ */ new Set();
+    this.pendingOrderedListRenumberNodes = /* @__PURE__ */ new Set();
     this.editExitGeneration = 0;
     /** Original canvas methods for unwrapping on cleanup. */
     this.origCanvasMethods = {};
@@ -24049,7 +24249,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
             const canvasPath = node.canvas.view.file.path;
             void copyText(
               node.nodeEl.win,
-              `obsidian://cammvas-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${node.id}`,
+              `obsidian://cammvas-plus-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${node.id}`,
               "Node link copied"
             );
           });
@@ -24092,7 +24292,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         }
       })
     );
-    this.registerObsidianProtocolHandler("cammvas-navigate", async (params) => {
+    this.registerObsidianProtocolHandler("cammvas-plus-navigate", async (params) => {
       var _a;
       const nodeId = params.id;
       if (!nodeId) return;
@@ -24215,6 +24415,10 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       this.cleanupAutoLayoutOnMoveHandler();
       this.cleanupAutoLayoutOnMoveHandler = null;
     }
+    if (this.cleanupNodeResizeHandler) {
+      this.cleanupNodeResizeHandler();
+      this.cleanupNodeResizeHandler = null;
+    }
     if (this.cleanupDragReparentHandler) {
       this.cleanupDragReparentHandler();
       this.cleanupDragReparentHandler = null;
@@ -24307,6 +24511,10 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     if (this.cleanupAutoLayoutOnMoveHandler) {
       this.cleanupAutoLayoutOnMoveHandler();
       this.cleanupAutoLayoutOnMoveHandler = null;
+    }
+    if (this.cleanupNodeResizeHandler) {
+      this.cleanupNodeResizeHandler();
+      this.cleanupNodeResizeHandler = null;
     }
     if (this.cleanupDragReparentHandler) {
       this.cleanupDragReparentHandler();
@@ -24419,6 +24627,32 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         (_a2 = this.branchCollapseHandle) == null ? void 0 : _a2.refresh();
       }
     );
+    this.cleanupNodeResizeHandler = registerNodeResizeHandler(
+      canvas,
+      () => this.settings.autoLayoutOnEdit && this.isMindmapCanvas(canvas) && this.canvasApi.getActiveCanvas() === canvas,
+      ({ nodes: resizedNodes, widthChangedNodeIds }) => {
+        const widthChangedNodes = resizedNodes.filter((node) => widthChangedNodeIds.has(node.id));
+        const affectedNodes = new Map(resizedNodes.map((node) => [node.id, node]));
+        for (const node of syncWidthsAtSameDepth(canvas, widthChangedNodes)) {
+          affectedNodes.set(node.id, node);
+        }
+        const skipAnimationNodeIds = new Set(canvas.nodes.keys());
+        this.preserveViewport(canvas, () => {
+          this.layoutEngine.layout(canvas, skipAnimationNodeIds);
+        });
+        this.trackedRaf(canvas.wrapperEl.win, () => {
+          var _a2;
+          if (this.canvasApi.getActiveCanvas() !== canvas) return;
+          this.preserveViewport(canvas, () => {
+            const heightChanged = this.resizeNodes(canvas, Array.from(affectedNodes.values()));
+            if (heightChanged) this.layoutEngine.layout(canvas, skipAnimationNodeIds);
+          });
+          this.updateGroupBounds(canvas);
+          (_a2 = this.branchCollapseHandle) == null ? void 0 : _a2.refresh();
+          canvas.requestSave();
+        });
+      }
+    );
     this.cleanupGroupDragHandler = import_obsidian10.Platform.isMobile ? null : registerGroupDragHandler(canvas, this.canvasApi);
     this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi);
     const onDragEnd = () => this.trackedRaf(canvas.wrapperEl.win, () => this.updateGroupBounds(canvas));
@@ -24515,8 +24749,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.autoResizeHandle = registerAutoResize(
       canvas,
       {
-        minHeight: this.settings.defaultNodeHeight,
-        maxHeight: this.settings.maxNodeHeight
+        minHeight: this.settings.defaultNodeHeight
       },
       (canvas2, editedNode) => {
         const generation = ++this.editExitGeneration;
@@ -24534,14 +24767,17 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
             this.updateGroupBounds(canvas2);
           });
         });
-      }
+      },
+      (canvas2, editedNode) => this.queueOrderedListRenumber(canvas2, editedNode)
     );
+    this.registerRenderedNodeAutoResize(canvas);
     this.keyboardHandler.onBeforeLeaveNode = () => {
       var _a2;
       const generation = ++this.editExitGeneration;
       (_a2 = this.autoResizeHandle) == null ? void 0 : _a2.finalizeNode();
       const node = this.canvasApi.getSelectedNode(canvas);
       if (node == null ? void 0 : node.isEditing) {
+        this.renumberOrderedListNow(canvas, node);
         this.waitForPreview(node, () => {
           if (generation !== this.editExitGeneration) return;
           if (this.canvasApi.getActiveCanvas() !== canvas) return;
@@ -24733,6 +24969,85 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     }
   }
   /**
+   * Re-measure text nodes whenever Obsidian mounts or re-renders their
+   * Markdown preview. Canvas virtualizes off-screen content, so a one-shot
+   * timer cannot reliably size every node.
+   */
+  registerRenderedNodeAutoResize(canvas) {
+    const pendingIds = /* @__PURE__ */ new Set();
+    let scheduled = false;
+    const queueNode = (node) => {
+      if (!node || node.isEditing) return;
+      pendingIds.add(node.id);
+      if (scheduled) return;
+      scheduled = true;
+      this.trackedRaf(canvas.wrapperEl.win, () => {
+        var _a;
+        scheduled = false;
+        if (this.canvasApi.getActiveCanvas() !== canvas) {
+          pendingIds.clear();
+          return;
+        }
+        const nodes = Array.from(pendingIds, (id) => canvas.nodes.get(id)).filter((node2) => !!node2);
+        pendingIds.clear();
+        let changed = false;
+        this.preserveViewport(canvas, () => {
+          changed = this.resizeNodes(canvas, nodes);
+          if (changed && this.settings.autoLayout && this.isMindmapCanvas(canvas)) {
+            this.layoutEngine.layout(canvas, new Set(canvas.nodes.keys()));
+          }
+        });
+        if (!changed) return;
+        this.updateGroupBounds(canvas);
+        (_a = this.branchCollapseHandle) == null ? void 0 : _a.refresh();
+      });
+    };
+    const queueFromElement = (value, includeDescendants = false) => {
+      var _a;
+      if (!isHtmlElement(value)) return;
+      const contentEl = value.matches(".canvas-node-content") ? value : (_a = value.closest(".canvas-node-content")) != null ? _a : includeDescendants ? value.querySelector(".canvas-node-content") : null;
+      if (!(contentEl == null ? void 0 : contentEl.querySelector(".markdown-preview-sizer"))) return;
+      const nodeEl = contentEl.closest(".canvas-node");
+      if (!nodeEl) return;
+      for (const node of canvas.nodes.values()) {
+        if (node.nodeEl === nodeEl) {
+          queueNode(node);
+          return;
+        }
+      }
+    };
+    const Observer = Reflect.get(canvas.wrapperEl.win, "MutationObserver");
+    const observer = new Observer((mutations) => {
+      for (const mutation of mutations) {
+        queueFromElement(mutation.target);
+        for (const added of Array.from(mutation.addedNodes)) {
+          queueFromElement(added, true);
+        }
+      }
+    });
+    observer.observe(canvas.wrapperEl, { childList: true, subtree: true });
+    this.pendingObservers.add(observer);
+    for (const node of canvas.nodes.values()) queueNode(node);
+  }
+  /** Keep the Markdown source numbers equal to the ordered-list preview. */
+  queueOrderedListRenumber(canvas, node) {
+    if (!node.isEditing || this.pendingOrderedListRenumberNodes.has(node.id)) return;
+    this.pendingOrderedListRenumberNodes.add(node.id);
+    this.trackedRaf(canvas.wrapperEl.win, () => {
+      this.pendingOrderedListRenumberNodes.delete(node.id);
+      this.renumberOrderedListNow(canvas, node);
+    });
+  }
+  renumberOrderedListNow(canvas, node) {
+    if (this.canvasApi.getActiveCanvas() !== canvas || !node.isEditing) return false;
+    const view = this.keyboardHandler.getEditorView(node);
+    if (!view) return false;
+    const changes = computeOrderedListRenumberChanges(view.state.doc.toString());
+    if (changes.length === 0) return false;
+    view.dispatch({ changes });
+    return true;
+  }
+  /**
    * Wait for a node's preview sizer to appear in the DOM, then invoke callback.
    * Uses MutationObserver instead of arbitrary setTimeout for precise timing.
    */
@@ -24792,89 +25107,57 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     }
     this.updateGroupBounds(canvas);
   }
-  /**
-   * Resize nodes to fit their rendered content, capped at maxNodeHeight.
-   * Handles both preview mode (markdown sizer) and edit mode (CodeMirror).
-   */
+  /** Measure rendered Markdown blocks without including Obsidian's flex filler. */
+  measurePreviewContentHeight(node, sizer) {
+    var _a, _b, _c;
+    const children = Array.from(sizer.children).filter(isHtmlElement);
+    if (children.length === 0) return node.text ? null : 0;
+    let minTop = Infinity;
+    let maxBottom = -Infinity;
+    for (const child of children) {
+      const style = (_a = child.ownerDocument.defaultView) == null ? void 0 : _a.getComputedStyle(child);
+      const marginTop = Number.parseFloat((_b = style == null ? void 0 : style.marginTop) != null ? _b : "0") || 0;
+      const marginBottom = Number.parseFloat((_c = style == null ? void 0 : style.marginBottom) != null ? _c : "0") || 0;
+      minTop = Math.min(minTop, child.offsetTop - marginTop);
+      maxBottom = Math.max(maxBottom, child.offsetTop + child.offsetHeight + marginBottom);
+    }
+    if (!Number.isFinite(minTop) || !Number.isFinite(maxBottom)) return null;
+    const VERTICAL_PADDING = 24;
+    const NODE_CHROME = 2;
+    return Math.ceil(Math.max(0, maxBottom - minTop) + VERTICAL_PADDING + NODE_CHROME);
+  }
+  /** Resize rendered nodes to their content while preserving manual widths. */
   resizeNodes(canvas, nodes) {
     var _a;
     const minH = this.settings.defaultNodeHeight;
-    const maxH = this.settings.maxNodeHeight;
-    const targetW = this.settings.defaultNodeWidth;
-    const BORDER = 2;
-    const SCALE = 1.2;
     let changed = false;
-    const unmeasurable = [];
     for (const node of nodes) {
-      let contentH = null;
-      let targetH = node.height;
+      let desiredH = null;
       if (node.isEditing) {
         const { cmContent, scroller } = getEditorElements(node);
         if (cmContent && scroller) {
-          contentH = 0;
-          for (const child of Array.from(cmContent.children)) {
-            if (isHtmlElement(child)) contentH += child.offsetHeight;
-          }
-          targetH = Math.min(Math.max(Math.ceil(contentH * SCALE) + BORDER, minH), maxH);
-          if (targetH !== node.height || targetW !== node.width) {
-            node.moveAndResize({ x: node.x, y: node.y, width: targetW, height: targetH });
-            changed = true;
-          }
-          continue;
+          const contentH = Math.max(
+            cmContent.scrollHeight,
+            cmContent.offsetHeight,
+            cmContent.getBoundingClientRect().height
+          );
+          const chrome = Math.max(0, node.height - scroller.clientHeight);
+          desiredH = Math.ceil(contentH + chrome + 12);
         }
       }
-      const sizer = (_a = node.contentEl) == null ? void 0 : _a.querySelector(".markdown-preview-sizer");
-      if (!sizer) {
-        if (node.width !== targetW) {
-          node.moveAndResize({ x: node.x, y: node.y, width: targetW, height: node.height });
-          changed = true;
-        }
-        if (node.text) unmeasurable.push(node);
-        continue;
+      if (desiredH === null) {
+        const sizer = (_a = node.contentEl) == null ? void 0 : _a.querySelector(".markdown-preview-sizer");
+        if (!sizer) continue;
+        desiredH = this.measurePreviewContentHeight(node, sizer);
       }
-      contentH = 0;
-      for (const child of Array.from(sizer.children)) {
-        if (isHtmlElement(child)) contentH += child.offsetHeight;
-      }
-      if (contentH === 0 && node.text) {
-        if (node.width !== targetW) {
-          node.moveAndResize({ x: node.x, y: node.y, width: targetW, height: node.height });
-          changed = true;
-        }
-        unmeasurable.push(node);
-        continue;
-      }
-      targetH = Math.min(Math.max(Math.ceil(contentH * SCALE) + BORDER, minH), maxH);
-      if (targetH === node.height && targetW === node.width) continue;
-      node.moveAndResize({ x: node.x, y: node.y, width: targetW, height: targetH });
-      changed = true;
-    }
-    if (changed) canvas.requestSave();
-    if (unmeasurable.length > 0) {
-      this.trackedTimeout(canvas.wrapperEl.win, () => this.resizeNodesRetry(canvas, unmeasurable, minH, maxH, BORDER, SCALE), 200);
-    }
-  }
-  /**
-   * Retry resizing nodes that couldn't be measured on the first pass.
-   * After layout repositions nodes, Obsidian may have rendered their content.
-   */
-  resizeNodesRetry(canvas, nodes, minH, maxH, BORDER, SCALE) {
-    var _a;
-    let changed = false;
-    for (const node of nodes) {
-      const sizer = (_a = node.contentEl) == null ? void 0 : _a.querySelector(".markdown-preview-sizer");
-      if (!sizer) continue;
-      let contentH = 0;
-      for (const child of Array.from(sizer.children)) {
-        if (isHtmlElement(child)) contentH += child.offsetHeight;
-      }
-      if (contentH === 0) continue;
-      const targetH = Math.min(Math.max(Math.ceil(contentH * SCALE) + BORDER, minH), maxH);
+      if (desiredH === null) continue;
+      const targetH = Math.max(desiredH, minH);
       if (targetH === node.height) continue;
       node.moveAndResize({ x: node.x, y: node.y, width: node.width, height: targetH });
       changed = true;
     }
     if (changed) canvas.requestSave();
+    return changed;
   }
   finishInsertNode(canvas, newNode, nearNode) {
     const forest = buildForest(canvas);
@@ -24942,7 +25225,6 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         const canvasData = freemindToCanvas(xml, {
           nodeWidth: this.settings.defaultNodeWidth,
           nodeHeight: this.settings.defaultNodeHeight,
-          maxNodeHeight: this.settings.maxNodeHeight,
           horizontalGap: this.settings.horizontalGap,
           verticalGap: this.settings.verticalGap
         });
@@ -25340,6 +25622,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.pendingTimers.clear();
     for (const pending of this.pendingRafs) pending.win.cancelAnimationFrame(pending.id);
     this.pendingRafs.clear();
+    this.pendingOrderedListRenumberNodes.clear();
     for (const obs of this.pendingObservers) obs.disconnect();
     this.pendingObservers.clear();
   }

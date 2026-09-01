@@ -72,6 +72,7 @@ export function registerBranchCollapse(
 			"aria-label",
 			`${collapsed ? "Expand" : "Collapse"} branch (${descendantCount} descendant${descendantCount === 1 ? "" : "s"})`
 		);
+		button.dataset.descendantCount = String(descendantCount);
 	};
 
 	const setEdgeHidden = (edge: CanvasEdge, hidden: boolean): void => {

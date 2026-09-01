@@ -221,8 +221,12 @@ export interface CMEditorView {
 	state: {
 		selection: { main: { from: number; to: number } };
 		sliceDoc: (from: number, to: number) => string;
+		doc: { toString: () => string };
 	};
-	dispatch: (tr: { changes: { from: number; to: number; insert: string } }) => void;
+	dispatch: (tr: {
+		changes: { from: number; to: number; insert: string }
+			| Array<{ from: number; to: number; insert: string }>;
+	}) => void;
 }
 
 /** DOM element with a CodeMirror view reference attached by Obsidian. */

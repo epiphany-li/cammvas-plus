@@ -496,7 +496,7 @@ export class KeyboardHandler {
 	/**
 	 * Access the CodeMirror 6 EditorView inside a canvas node's iframe.
 	 */
-	private getEditorView(node: CanvasNode): CMEditorView | null {
+	getEditorView(node: CanvasNode): CMEditorView | null {
 		const iframe = node.contentEl?.querySelector<HTMLIFrameElement>("iframe");
 		const doc = iframe?.contentDocument ?? node.contentEl?.ownerDocument;
 		if (!doc) return null;

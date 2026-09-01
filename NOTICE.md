@@ -2,6 +2,8 @@
 
 Cammvas is an independent Obsidian plugin by cuatrecasespro.
 
+Cammvas Plus is a derivative maintained by epiphany-li.
+
 This project is based on substantial portions of the MIT-licensed Mindvas project:
 
 - Original project: https://github.com/mobench/mindvas

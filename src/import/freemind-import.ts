@@ -17,7 +17,6 @@ interface FreeMindNode {
 interface LayoutOptions {
 	nodeWidth: number;
 	nodeHeight: number;
-	maxNodeHeight: number;
 	horizontalGap: number;
 	verticalGap: number;
 }
@@ -70,7 +69,7 @@ function parseNode(el: Element, inheritedPosition: Position): FreeMindNode {
  * Estimate node height based on text content.
  * Uses a rough heuristic: ~8px per character width, ~22px line height, ~20px padding.
  */
-function estimateNodeHeight(text: string, nodeWidth: number, minHeight: number, maxHeight: number): number {
+function estimateNodeHeight(text: string, nodeWidth: number, minHeight: number): number {
 	const AVG_CHAR_WIDTH = 8;
 	const LINE_HEIGHT = 22;
 	const PADDING = 20;
@@ -88,7 +87,7 @@ function estimateNodeHeight(text: string, nodeWidth: number, minHeight: number, 
 	}
 
 	const estimated = totalLines * LINE_HEIGHT + PADDING;
-	return Math.min(Math.max(estimated, minHeight), maxHeight);
+	return Math.max(estimated, minHeight);
 }
 
 
@@ -96,7 +95,7 @@ function estimateNodeHeight(text: string, nodeWidth: number, minHeight: number, 
  * Get the estimated height for a single node.
  */
 function nodeHeight(node: FreeMindNode, opts: LayoutOptions): number {
-	return estimateNodeHeight(node.text, opts.nodeWidth, opts.nodeHeight, opts.maxNodeHeight);
+	return estimateNodeHeight(node.text, opts.nodeWidth, opts.nodeHeight);
 }
 
 /**

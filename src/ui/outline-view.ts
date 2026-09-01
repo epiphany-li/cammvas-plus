@@ -3,7 +3,7 @@ import type { Canvas, CanvasNode, CanvasNodeFileData, CanvasView as CanvasViewTy
 import { buildForest, TreeNode, getDescendants, getGroupIds, getNodeTitle } from "../mindmap/tree-model";
 import { copyText } from "./clipboard";
 
-export const OUTLINE_VIEW_TYPE = "cammvas-outline";
+export const OUTLINE_VIEW_TYPE = "cammvas-plus-outline";
 
 interface GroupInfo {
 	node: CanvasNode;
@@ -414,7 +414,7 @@ export class OutlineView extends ItemView {
 						const canvasPath = canvas.view.file.path;
 						void copyText(
 							self.win,
-							`obsidian://cammvas-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${root.canvasNode.id}`,
+							`obsidian://cammvas-plus-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${root.canvasNode.id}`,
 							"Node link copied"
 						);
 					});
@@ -474,7 +474,7 @@ export class OutlineView extends ItemView {
 						const canvasPath = canvas.view.file.path;
 						void copyText(
 							self.win,
-							`obsidian://cammvas-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${node.canvasNode.id}`,
+							`obsidian://cammvas-plus-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${node.canvasNode.id}`,
 							"Node link copied"
 						);
 					});

@@ -326,9 +326,9 @@ export class LayoutEngine {
 	}
 
 	/**
-	 * Pack an array of subtrees vertically using contour comparison.
-	 * First subtree stays at y=0; each subsequent one is shifted down
-	 * just enough to clear the combined contour at all shared depths.
+	 * Pack sibling subtrees as non-overlapping vertical blocks. This leaves a
+	 * reliable pointer gap between complete branches instead of allowing the
+	 * descendants of adjacent siblings to interleave visually.
 	 */
 	private packSubtrees(
 		subtrees: SubtreeInfo[]
@@ -348,15 +348,13 @@ export class LayoutEngine {
 		for (let i = 1; i < subtrees.length; i++) {
 			const sub = subtrees[i];
 
-			// Find minimum Y-shift so this subtree clears combined at all shared depths
-			let shift = 0;
-			for (const [d, ext] of sub.contour) {
-				const prev = combinedContour.get(d);
-				if (prev !== undefined) {
-					const needed = prev.bottom + this.config.verticalGap - ext.top;
-					if (needed > shift) shift = needed;
-				}
-			}
+			const previousBottom = Math.max(
+				...Array.from(combinedContour.values(), (extent) => extent.bottom)
+			);
+			const subtreeTop = Math.min(
+				...Array.from(sub.contour.values(), (extent) => extent.top)
+			);
+			const shift = previousBottom + this.config.verticalGap - subtreeTop;
 
 			yOffsets.push(shift);
 

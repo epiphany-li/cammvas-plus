@@ -19,7 +19,6 @@ export interface MindMapSettings {
 	verticalGap: number;
 	defaultNodeWidth: number;
 	defaultNodeHeight: number;
-	maxNodeHeight: number;
 	defaultMindmapMode: boolean;
 	navigationZoomPadding: number;
 	mouseNavigation: boolean;
@@ -42,7 +41,6 @@ export const DEFAULT_SETTINGS: MindMapSettings = {
 	verticalGap: 40,
 	defaultNodeWidth: 300,
 	defaultNodeHeight: 60,
-	maxNodeHeight: 300,
 	defaultMindmapMode: true,
 	navigationZoomPadding: 200,
 	mouseNavigation: false,
@@ -67,7 +65,6 @@ const POSITIVE_NUMBER_SETTING_KEYS = [
 	"verticalGap",
 	"defaultNodeWidth",
 	"defaultNodeHeight",
-	"maxNodeHeight",
 	"edgeLabelFontSize",
 ] as const;
 
@@ -141,7 +138,6 @@ export class MindMapSettingTab extends PluginSettingTab {
 			{ name: "Vertical gap", desc: "Space between sibling nodes (px)", control: positiveNumber("verticalGap") },
 			{ name: "Default node width", desc: "Width of newly created nodes (px)", control: positiveNumber("defaultNodeWidth") },
 			{ name: "Default node height", desc: "Height of newly created nodes (px)", control: positiveNumber("defaultNodeHeight") },
-			{ name: "Max node height", desc: "Maximum height a node can grow to before scrolling (px)", control: positiveNumber("maxNodeHeight") },
 			{ name: "Mouse back/forward navigation", desc: "Use mouse back/forward buttons for in-canvas navigation instead of Obsidian's default note navigation", visible: () => !Platform.isMobile, control: { type: "toggle", key: "mouseNavigation" } },
 			{ name: "Navigation zoom padding", desc: "Extra space around the target node when zooming after navigation (px). 0 = tight zoom.", control: { type: "number", key: "navigationZoomPadding", min: 0, step: 1, validate: (value) => value >= 0 ? undefined : "Enter zero or a positive number." } },
 		];
