@@ -4537,6 +4537,8 @@ var CanvasAPI = class {
       return;
     }
     canvas.wrapperEl.win.setTimeout(() => {
+      var _a;
+      if (canvas.nodes.get(node.id) !== node || !((_a = node.nodeEl) == null ? void 0 : _a.isConnected) || !canvas.selection.has(node)) return;
       node.startEditing();
     }, 50);
   }
@@ -5040,7 +5042,7 @@ function registerDragEndHandler(canvas) {
 // src/mindmap/layout-engine.ts
 var DEFAULT_CONFIG = {
   horizontalGap: 80,
-  verticalGap: 20,
+  verticalGap: 40,
   nodeWidth: 300,
   nodeHeight: 60,
   animate: true
@@ -6354,7 +6356,8 @@ var DEFAULT_SETTINGS = {
   enterCreatesSibling: true,
   edgeLabelFontSize: 14,
   horizontalGap: 80,
-  verticalGap: 20,
+  // Keep sibling branches comfortably separated to reduce accidental clicks/drags.
+  verticalGap: 40,
   defaultNodeWidth: 300,
   defaultNodeHeight: 60,
   maxNodeHeight: 300,
@@ -6756,9 +6759,19 @@ function identifyStrangers(canvas, canvasApi, group, groupIds) {
   return Array.from(strangerIds).map((id) => insideNodes.get(id));
 }
 function registerGroupDragHandler(canvas, canvasApi) {
-  var _a, _b;
+  var _a;
   const frozenNodes = [];
+  const win = canvas.wrapperEl.win;
+  const restoreFrozenNodes = (requestSave) => {
+    if (frozenNodes.length === 0) return;
+    for (const node of frozenNodes) {
+      delete node.moveTo;
+    }
+    frozenNodes.length = 0;
+    if (requestSave) canvas.requestSave();
+  };
   const downHandler = (e) => {
+    restoreFrozenNodes(false);
     if (!e.altKey) return;
     const node = findNodeFromEvent(canvas, e);
     if (!node) return;
@@ -6772,25 +6785,19 @@ function registerGroupDragHandler(canvas, canvasApi) {
     }
   };
   const upHandler = () => {
-    if (frozenNodes.length === 0) return;
-    for (const node of frozenNodes) {
-      delete node.moveTo;
-    }
-    frozenNodes.length = 0;
-    canvas.requestSave();
+    restoreFrozenNodes(true);
   };
   (_a = canvas.wrapperEl) == null ? void 0 : _a.addEventListener("pointerdown", downHandler, true);
-  (_b = canvas.wrapperEl) == null ? void 0 : _b.addEventListener("pointerup", upHandler);
+  win.addEventListener("pointerup", upHandler, true);
+  win.addEventListener("pointercancel", upHandler, true);
+  win.addEventListener("blur", upHandler);
   return () => {
-    var _a2, _b2;
-    if (frozenNodes.length > 0) {
-      for (const node of frozenNodes) {
-        delete node.moveTo;
-      }
-      frozenNodes.length = 0;
-    }
+    var _a2;
+    restoreFrozenNodes(false);
     (_a2 = canvas.wrapperEl) == null ? void 0 : _a2.removeEventListener("pointerdown", downHandler, true);
-    (_b2 = canvas.wrapperEl) == null ? void 0 : _b2.removeEventListener("pointerup", upHandler);
+    win.removeEventListener("pointerup", upHandler, true);
+    win.removeEventListener("pointercancel", upHandler, true);
+    win.removeEventListener("blur", upHandler);
   };
 }
 
@@ -22610,6 +22617,7 @@ function registerAutoResize(canvas, config, onEditExit) {
   let cachedCmContent = null;
   let cachedScroller = null;
   let cachedInputTarget = null;
+  let watchGeneration = 0;
   const win = canvas.wrapperEl.win;
   function onContentChange() {
     if (!activeNode || !cachedScroller || !cachedCmContent) return;
@@ -22628,6 +22636,7 @@ function registerAutoResize(canvas, config, onEditExit) {
   }
   function startWatching(node) {
     var _a2, _b2;
+    watchGeneration++;
     const { iframe, scroller, cmContent } = getEditorElements(node);
     activeNode = node;
     cachedCmContent = cmContent;
@@ -22660,6 +22669,7 @@ function registerAutoResize(canvas, config, onEditExit) {
   }
   function stopWatching(triggerRelayout = true) {
     if (!activeNode) return;
+    watchGeneration++;
     const node = activeNode;
     observer == null ? void 0 : observer.disconnect();
     if (inputHandler && cachedInputTarget) {
@@ -22690,8 +22700,10 @@ function registerAutoResize(canvas, config, onEditExit) {
   };
   const focusOutHandler = () => {
     if (!activeNode) return;
+    const node = activeNode;
+    const generation = watchGeneration;
     win.setTimeout(() => {
-      if (activeNode && !activeNode.isEditing) {
+      if (generation === watchGeneration && activeNode === node && !node.isEditing) {
         stopWatching();
       }
     }, 50);
@@ -22700,8 +22712,10 @@ function registerAutoResize(canvas, config, onEditExit) {
     var _a2;
     if (!activeNode) return;
     if (isDomNode(e.target) && ((_a2 = activeNode.nodeEl) == null ? void 0 : _a2.contains(e.target))) return;
+    const node = activeNode;
+    const generation = watchGeneration;
     win.setTimeout(() => {
-      if (activeNode && !activeNode.isEditing) {
+      if (generation === watchGeneration && activeNode === node && !node.isEditing) {
         stopWatching();
       }
     }, 50);
@@ -22750,6 +22764,14 @@ var OutlineView = class extends import_obsidian8.ItemView {
     this.groupIds = [];
     this.draggedRoot = null;
     this.dragSourceGroupId = null;
+    /** Clears a pending grip-only drag permission when the pointer is released elsewhere. */
+    this.activeDragPermissionReset = null;
+    this.clearDragPermission = () => {
+      var _a;
+      (_a = this.activeDragPermissionReset) == null ? void 0 : _a.call(this);
+      this.activeDragPermissionReset = null;
+    };
+    this.clearDragPermissionListeners = null;
     this.activeNodeId = null;
     this.allItemEls = /* @__PURE__ */ new Map();
     this.groupElMap = /* @__PURE__ */ new Map();
@@ -22759,6 +22781,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
     this.searchContainerEl = null;
     this.searchComponent = null;
     this.nodeDataById = /* @__PURE__ */ new Map();
+    this.renderGeneration = 0;
     this.zoomPadding = 0;
     this.onForestLayout = null;
   }
@@ -22773,6 +22796,15 @@ var OutlineView = class extends import_obsidian8.ItemView {
   }
   onOpen() {
     this.contentEl.addClass("cammvas-outline");
+    const win = this.contentEl.win;
+    win.addEventListener("pointerup", this.clearDragPermission, true);
+    win.addEventListener("pointercancel", this.clearDragPermission, true);
+    win.addEventListener("lostpointercapture", this.clearDragPermission, true);
+    this.clearDragPermissionListeners = () => {
+      win.removeEventListener("pointerup", this.clearDragPermission, true);
+      win.removeEventListener("pointercancel", this.clearDragPermission, true);
+      win.removeEventListener("lostpointercapture", this.clearDragPermission, true);
+    };
     const navHeader = this.containerEl.createDiv({ cls: "nav-header" });
     this.containerEl.insertBefore(navHeader, this.contentEl);
     this.navHeaderEl = navHeader;
@@ -22820,7 +22852,10 @@ var OutlineView = class extends import_obsidian8.ItemView {
     return Promise.resolve();
   }
   onClose() {
+    var _a;
     this.clear();
+    (_a = this.clearDragPermissionListeners) == null ? void 0 : _a.call(this);
+    this.clearDragPermissionListeners = null;
     if (this.navHeaderEl) {
       this.navHeaderEl.remove();
       this.navHeaderEl = null;
@@ -22835,6 +22870,10 @@ var OutlineView = class extends import_obsidian8.ItemView {
    */
   refresh(canvas) {
     var _a;
+    this.renderGeneration++;
+    this.clearDragPermission();
+    this.draggedRoot = null;
+    this.dragSourceGroupId = null;
     this.contentEl.empty();
     this.selectedRoots.clear();
     this.groupElMap.clear();
@@ -22979,12 +23018,20 @@ var OutlineView = class extends import_obsidian8.ItemView {
     });
     if (dragHandle) {
       let dragAllowed = false;
-      dragHandle.addEventListener("pointerdown", () => {
-        dragAllowed = true;
-      });
-      self.addEventListener("pointerup", () => {
+      const resetDragAllowed = () => {
         dragAllowed = false;
+        if (this.activeDragPermissionReset === resetDragAllowed) {
+          this.activeDragPermissionReset = null;
+        }
+      };
+      dragHandle.addEventListener("pointerdown", () => {
+        this.clearDragPermission();
+        dragAllowed = true;
+        this.activeDragPermissionReset = resetDragAllowed;
       });
+      self.addEventListener("pointerup", resetDragAllowed);
+      self.addEventListener("pointercancel", resetDragAllowed);
+      self.addEventListener("lostpointercapture", resetDragAllowed);
       self.setAttribute("draggable", "true");
       self.addEventListener("dragstart", (e) => {
         var _a;
@@ -22992,7 +23039,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
           e.preventDefault();
           return;
         }
-        dragAllowed = false;
+        resetDragAllowed();
         this.draggedRoot = root;
         this.dragSourceGroupId = groupId != null ? groupId : null;
         self.addClass("is-dragging");
@@ -23222,13 +23269,18 @@ var OutlineView = class extends import_obsidian8.ItemView {
       this.app.workspace.setActiveLeaf(this.canvasLeaf, { focus: true });
     }
     canvas.selectOnly(group);
-    this.contentEl.win.setTimeout(() => group.startEditing(), 50);
+    this.contentEl.win.setTimeout(() => {
+      var _a;
+      if (this.lastCanvas !== canvas || canvas.nodes.get(group.id) !== group || !((_a = group.nodeEl) == null ? void 0 : _a.isConnected) || !canvas.selection.has(group)) return;
+      group.startEditing();
+    }, 50);
     this.clearSelection();
   }
   /**
    * Render a group as a collapsible tree-item section.
    */
   renderGroup(group, canvas) {
+    const renderGeneration = this.renderGeneration;
     const isCollapsed = this.collapsedGroups.has(group.node.id);
     const treeItem = this.contentEl.createDiv({
       cls: "tree-item" + (isCollapsed ? " is-collapsed" : "")
@@ -23269,6 +23321,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
       }
       clickTimer = this.contentEl.win.setTimeout(() => {
         clickTimer = null;
+        if (this.renderGeneration !== renderGeneration || this.lastCanvas !== canvas || !treeItem.isConnected) return;
         if (this.collapsedGroups.has(group.node.id)) {
           this.collapsedGroups.delete(group.node.id);
           treeItem.removeClass("is-collapsed");
@@ -23403,6 +23456,8 @@ var OutlineView = class extends import_obsidian8.ItemView {
    * Clear the outline (no canvas active).
    */
   clear() {
+    this.renderGeneration++;
+    this.clearDragPermission();
     this.canvasLeaf = null;
     this.lastCanvas = null;
     this.selectedRoots.clear();
@@ -23904,9 +23959,11 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         if (!node) return false;
         if (checking) return true;
         const wasEditing = node.isEditing;
-        this.resizeNodes(canvas, this.collectSubtreeNodes(canvas, node));
-        this.layoutEngine.layout(canvas);
-        this.updateGroupBounds(canvas);
+        this.preserveViewport(canvas, () => {
+          this.resizeNodes(canvas, this.collectSubtreeNodes(canvas, node));
+          this.layoutEngine.layout(canvas);
+          this.updateGroupBounds(canvas);
+        });
         if (wasEditing) node.startEditing();
       }
     });
@@ -23919,9 +23976,11 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         if (!this.isMindmapCanvas(canvas)) return false;
         if (canvas.nodes.size === 0) return false;
         if (checking) return true;
-        this.resizeNodes(canvas, Array.from(canvas.nodes.values()));
-        this.layoutEngine.layout(canvas);
-        this.updateGroupBounds(canvas);
+        this.preserveViewport(canvas, () => {
+          this.resizeNodes(canvas, Array.from(canvas.nodes.values()));
+          this.layoutEngine.layout(canvas);
+          this.updateGroupBounds(canvas);
+        });
       }
     });
     this.addCommand({
