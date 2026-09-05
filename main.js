@@ -5672,6 +5672,12 @@ function shouldCreateSiblingOnEnter(event, enabled, isEditing) {
 function shouldStartEditingOnEnter(event, enabled, isEditing) {
   return enabled && !isEditing && event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
 }
+function shouldStartEditingOnSpace(event, isEditing) {
+  return !isEditing && (event.key === " " || event.key === "Spacebar") && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
+}
+function shouldExitEditingOnEscape(event, isEditing) {
+  return isEditing && event.key === "Escape" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
+}
 function shouldCreateChildOnTab(event, enabled, hasSelectedNode) {
   return enabled && hasSelectedNode && event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
 }
@@ -6005,6 +6011,7 @@ var KeyboardHandler = class {
   registerArrowKeyNavigation(canvas) {
     var _a;
     this.unregisterArrowKeyNavigation();
+    this.registerEditingStateShortcuts(canvas);
     const commandIds = [
       ["ArrowRight", this.commandId("mindmap-nav-right")],
       ["ArrowLeft", this.commandId("mindmap-nav-left")],
@@ -6052,6 +6059,29 @@ var KeyboardHandler = class {
       "Tab",
       (event) => this.handleChildTab(canvas, event)
     );
+  }
+  registerEditingStateShortcuts(canvas) {
+    const keydownHandler = (event) => {
+      var _a;
+      const node = this.canvasApi.getSelectedNode(canvas);
+      if (!node || !this.isMindmapEnabled(canvas)) return;
+      if (shouldStartEditingOnSpace(event, node.isEditing)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        node.startEditing();
+        return;
+      }
+      if (shouldExitEditingOnEscape(event, node.isEditing)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        (_a = this.onBeforeLeaveNode) == null ? void 0 : _a.call(this);
+        node.blur();
+      }
+    };
+    canvas.wrapperEl.addEventListener("keydown", keydownHandler, true);
+    this.arrowKeyRestorers.push(() => {
+      canvas.wrapperEl.removeEventListener("keydown", keydownHandler, true);
+    });
   }
   registerCanvasKeyOverride(canvas, key, handle) {
     const scope = canvas.view.scope;

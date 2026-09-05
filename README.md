@@ -29,7 +29,7 @@ Cammvas adds the interactions people expect from standalone mind-mapping softwar
 
 ## What Cammvas Adds
 
-- **Mind-map keyboard workflow:** `Enter` creates a sibling, `Tab` creates a child, `Shift + Enter` inserts a line break, and arrow keys navigate the tree.
+- **Mind-map keyboard workflow:** `Space` edits the selected node, `Escape` or an outside click exits editing, `Enter` creates a sibling, `Tab` creates a child, `Shift + Enter` inserts a line break, and arrow keys navigate the tree.
 - **Drag to create branches:** drop one or multiple selected nodes onto another node to reparent their complete branches, with cycle prevention and a highlighted target.
 - **Collapsible branches:** fold and restore complete descendant trees directly from their parent nodes.
 - **Automatic tree layout:** compact contour-based placement with left, right, and balanced branches.
@@ -43,7 +43,7 @@ Cammvas adds the interactions people expect from standalone mind-mapping softwar
 
 1. Open a Canvas and activate **Mindmap mode** from the Canvas controls.
 2. Double-click empty Canvas space to create a root node.
-3. Use `Enter` and `Tab` for the conventional mind-mapping workflow.
+3. Use `Space` to edit a selected node, `Escape` or an outside click to finish editing, and `Enter` / `Tab` to create sibling and child nodes.
 4. Restructure branches by dropping nodes onto other nodes.
 5. Use the node chevrons to collapse or expand branches.
 
@@ -53,7 +53,7 @@ All behavior can be configured under **Settings > Cammvas Plus**.
 
 ## Keyboard Workflow
 
-When **Mind mapping Enter and Tab** is enabled, plain `Enter` starts editing a selected node or creates a sibling while editing, plain `Tab` creates a child, `Shift + Enter` inserts a line break, and arrow keys navigate between nodes.
+Press `Space` on a selected node to enter editing. While editing, `Space` remains a normal text space; press `Escape` or click outside the node to finish. When **Mind mapping Enter and Tab** is enabled, plain `Enter` starts editing a selected node or creates a sibling while editing, plain `Tab` creates a child, `Shift + Enter` inserts a line break, and arrow keys navigate between nodes outside editing.
 
 Cammvas does not assign default hotkeys to **Add child node**, **Add sibling node**, or **Create root node**. All commands remain available from the command palette and can be assigned custom hotkeys under **Settings > Hotkeys**.
 

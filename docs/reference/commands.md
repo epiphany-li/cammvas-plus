@@ -55,7 +55,7 @@ All commands are available from the command palette (`Ctrl/Cmd+P`). Search for "
 
 | Command                      | Hotkey                     |
 | ---------------------------- | -------------------------- |
-| Edit selected node           | `Enter`                    |
+| Edit selected node           | `Space` or `Enter`         |
 | Delete node and focus parent | `Ctrl + Shift + Backspace` |
 | Flip branch                  | `Ctrl + Shift + S`         |
 | Toggle balanced layout       | `Ctrl + Shift + D`         |
@@ -66,4 +66,4 @@ All commands are available from the command palette (`Ctrl/Cmd+P`). Search for "
 Cammvas includes a physical-key fallback for non-Latin keyboard layouts. See [Working with RTL content](/broken/pages/T0FxqT2PDsBShPB5TUm4).
 {% endhint %}
 
-When **Mind mapping Enter and Tab** is enabled, plain `Enter` starts editing a selected node or creates a sibling while editing, `Tab` creates a child from the selected node, and `Shift + Enter` inserts a line break. Double-click empty Canvas space to create a root. Node creation commands have no default hotkeys but can be customized under **Settings > Hotkeys**.
+Press `Space` on a selected node to edit it. While editing, `Space` inserts text normally; `Escape` or clicking outside finishes editing. When **Mind mapping Enter and Tab** is enabled, plain `Enter` starts editing a selected node or creates a sibling while editing, `Tab` creates a child from the selected node, and `Shift + Enter` inserts a line break. Double-click empty Canvas space to create a root. Node creation commands have no default hotkeys but can be customized under **Settings > Hotkeys**.

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
 	shouldCreateChildOnTab,
 	shouldCreateSiblingOnEnter,
+	shouldExitEditingOnEscape,
 	shouldStartEditingOnEnter,
+	shouldStartEditingOnSpace,
 } from "../src/ui/editing-enter";
 
 function enterEvent(overrides: Partial<Parameters<typeof shouldCreateSiblingOnEnter>[0]> = {}) {
@@ -42,6 +44,27 @@ describe("shouldStartEditingOnEnter", () => {
 		expect(shouldStartEditingOnEnter(enterEvent(), true, true)).toBe(false);
 		expect(shouldStartEditingOnEnter(enterEvent(), false, false)).toBe(false);
 		expect(shouldStartEditingOnEnter(enterEvent({ shiftKey: true }), true, false)).toBe(false);
+	});
+});
+
+describe("shouldStartEditingOnSpace", () => {
+	it("starts editing from a selected, non-editing node on plain Space", () => {
+		expect(shouldStartEditingOnSpace(enterEvent({ key: " " }), false)).toBe(true);
+		expect(shouldStartEditingOnSpace(enterEvent({ key: "Spacebar" }), false)).toBe(true);
+	});
+
+	it("leaves Space untouched while editing or when modified", () => {
+		expect(shouldStartEditingOnSpace(enterEvent({ key: " " }), true)).toBe(false);
+		expect(shouldStartEditingOnSpace(enterEvent({ key: " ", ctrlKey: true }), false)).toBe(false);
+		expect(shouldStartEditingOnSpace(enterEvent({ key: " ", isComposing: true }), false)).toBe(false);
+	});
+});
+
+describe("shouldExitEditingOnEscape", () => {
+	it("exits editing on plain Escape only while editing", () => {
+		expect(shouldExitEditingOnEscape(enterEvent({ key: "Escape" }), true)).toBe(true);
+		expect(shouldExitEditingOnEscape(enterEvent({ key: "Escape" }), false)).toBe(false);
+		expect(shouldExitEditingOnEscape(enterEvent({ key: "Escape", shiftKey: true }), true)).toBe(false);
 	});
 });
 

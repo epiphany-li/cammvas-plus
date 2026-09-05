@@ -17,7 +17,9 @@ import { findNearestNodeInDirection, SpatialDirection } from "./spatial-navigati
 import {
 	shouldCreateChildOnTab,
 	shouldCreateSiblingOnEnter,
+	shouldExitEditingOnEscape,
 	shouldStartEditingOnEnter,
+	shouldStartEditingOnSpace,
 } from "./editing-enter";
 import { isNodeEditorFocused } from "./editing-state";
 import { pluginCommandId } from "./plugin-command";
@@ -404,6 +406,7 @@ export class KeyboardHandler {
 
 	registerArrowKeyNavigation(canvas: Canvas): void {
 		this.unregisterArrowKeyNavigation();
+		this.registerEditingStateShortcuts(canvas);
 		const commandIds: ReadonlyArray<readonly [string, string]> = [
 			["ArrowRight", this.commandId("mindmap-nav-right")],
 			["ArrowLeft", this.commandId("mindmap-nav-left")],
@@ -458,6 +461,32 @@ export class KeyboardHandler {
 			"Tab",
 			(event) => this.handleChildTab(canvas, event)
 		);
+	}
+
+	private registerEditingStateShortcuts(canvas: Canvas): void {
+		const keydownHandler = (event: KeyboardEvent): void => {
+			const node = this.canvasApi.getSelectedNode(canvas);
+			if (!node || !this.isMindmapEnabled(canvas)) return;
+
+			if (shouldStartEditingOnSpace(event, node.isEditing)) {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				node.startEditing();
+				return;
+			}
+
+			if (shouldExitEditingOnEscape(event, node.isEditing)) {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				this.onBeforeLeaveNode?.();
+				node.blur();
+			}
+		};
+
+		canvas.wrapperEl.addEventListener("keydown", keydownHandler, true);
+		this.arrowKeyRestorers.push(() => {
+			canvas.wrapperEl.removeEventListener("keydown", keydownHandler, true);
+		});
 	}
 
 	private registerCanvasKeyOverride(
