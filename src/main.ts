@@ -23,6 +23,7 @@ import { createMindmapPdf } from "./export/pdf-export";
 import { PdfExportModal } from "./export/pdf-export-modal";
 import { registerBranchCollapse, BranchCollapseHandle } from "./canvas/branch-collapse";
 import { registerAutoResize, AutoResizeHandle, getEditorElements } from "./ui/auto-resize";
+import { findNavigableHistoryIndex } from "./ui/navigation-history";
 import { OutlineView, OUTLINE_VIEW_TYPE } from "./ui/outline-view";
 import { isHtmlElement } from "./ui/dom";
 import { copyText } from "./ui/clipboard";
@@ -513,25 +514,41 @@ export default class CanvasMindMapPlugin extends Plugin {
 	}
 
 	private navigateBack(canvas: Canvas): void {
-		if (this.navHistoryIndex <= 0) return;
-		this.keyboardHandler?.onBeforeLeaveNode?.();
+		const targetIndex = findNavigableHistoryIndex(
+			this.navHistory,
+			this.navHistoryIndex,
+			-1,
+			(nodeId) => canvas.nodes.has(nodeId)
+		);
+		if (targetIndex === null) return;
+		const node = canvas.nodes.get(this.navHistory[targetIndex]);
+		if (!node) return;
+		const editingNode = this.canvasApi.getSelectedNode(canvas);
+		if (editingNode?.isEditing) {
+			this.keyboardHandler.finishEditing(canvas, editingNode, false);
+		}
 		this.navSkipTracking = true;
-		this.navHistoryIndex--;
-		const nodeId = this.navHistory[this.navHistoryIndex];
-		const node = canvas.nodes.get(nodeId);
-		if (!node) { this.navSkipTracking = false; return; }
+		this.navHistoryIndex = targetIndex;
 		this.canvasApi.selectAndZoom(canvas, node, this.settings.navigationZoomPadding);
 		this.navSkipTracking = false;
 	}
 
 	private navigateForward(canvas: Canvas): void {
-		if (this.navHistoryIndex >= this.navHistory.length - 1) return;
-		this.keyboardHandler?.onBeforeLeaveNode?.();
+		const targetIndex = findNavigableHistoryIndex(
+			this.navHistory,
+			this.navHistoryIndex,
+			1,
+			(nodeId) => canvas.nodes.has(nodeId)
+		);
+		if (targetIndex === null) return;
+		const node = canvas.nodes.get(this.navHistory[targetIndex]);
+		if (!node) return;
+		const editingNode = this.canvasApi.getSelectedNode(canvas);
+		if (editingNode?.isEditing) {
+			this.keyboardHandler.finishEditing(canvas, editingNode, false);
+		}
 		this.navSkipTracking = true;
-		this.navHistoryIndex++;
-		const nodeId = this.navHistory[this.navHistoryIndex];
-		const node = canvas.nodes.get(nodeId);
-		if (!node) { this.navSkipTracking = false; return; }
+		this.navHistoryIndex = targetIndex;
 		this.canvasApi.selectAndZoom(canvas, node, this.settings.navigationZoomPadding);
 		this.navSkipTracking = false;
 	}
@@ -1023,8 +1040,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 					transferSelection: false,
 				}),
 				(node) => {
-					this.keyboardHandler.onBeforeLeaveNode?.();
-					node.blur();
+					this.keyboardHandler.finishEditing(canvas, node, false);
 				}
 			);
 		}
@@ -1939,8 +1955,8 @@ export default class CanvasMindMapPlugin extends Plugin {
 			return;
 		}
 
-		// Finalize live sizing without triggering the normal root-level edit-exit layout.
-		this.autoResizeHandle?.finalizeNode();
+		// Keep an active editor session intact. Auto-resize already maintains its
+		// live node height, and finalizing here would detach its iframe listeners.
 		this.layoutEngine.layoutChildren(canvas, node.id);
 		this.updateGroupBounds(canvas);
 		this.branchCollapseHandle?.refresh();

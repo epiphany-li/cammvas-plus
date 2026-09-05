@@ -301,7 +301,8 @@ export class CanvasAPI {
 			// The delay can outlive a canvas switch or node deletion. Do not reopen
 			// a stale/detached card after the user's focus has already moved on.
 			if (
-				canvas.nodes.get(node.id) !== node
+				this.getActiveCanvas() !== canvas
+				|| canvas.nodes.get(node.id) !== node
 				|| !node.nodeEl?.isConnected
 				|| !canvas.selection.has(node)
 			) return;

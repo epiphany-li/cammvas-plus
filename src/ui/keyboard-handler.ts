@@ -22,7 +22,7 @@ import {
 	shouldStartEditingOnEnter,
 	shouldStartEditingOnSpace,
 } from "./editing-enter";
-import { isNodeEditorFocused } from "./editing-state";
+import { isNodeEditorFocused, shouldUseNodeArrowNavigation } from "./editing-state";
 import { pluginCommandId } from "./plugin-command";
 import { isDomNode } from "./dom";
 import { focusCanvasKeyboardTarget } from "./canvas-keyboard-focus";
@@ -38,6 +38,7 @@ export class KeyboardHandler {
 	private arrowKeySelectionOnly = false;
 	private arrowNavigationCanvas: Canvas | null = null;
 	private arrowKeyRestorers: Array<() => void> = [];
+	private pendingFocusRestore: { win: Window; id: number } | null = null;
 
 	constructor(
 		private plugin: Plugin,
@@ -65,7 +66,7 @@ export class KeyboardHandler {
 				if (!canvas) return false;
 				// Don't consume Enter when focus is outside the canvas (e.g. outline rename)
 				const activeEl = canvas.wrapperEl.doc.activeElement;
-				if (activeEl && !canvas.wrapperEl.contains(activeEl)) return false;
+				if (activeEl && !this.isCanvasKeyboardTarget(canvas, activeEl)) return false;
 				const node = this.canvasApi.getSelectedNode(canvas);
 				if (!node) return false;
 				if (node.isEditing) return false;
@@ -87,8 +88,7 @@ export class KeyboardHandler {
 				if (!node.isEditing) return false;
 				if (checking) return true;
 
-				this.onBeforeLeaveNode?.();
-				node.blur();
+				this.finishEditing(canvas, node);
 			},
 		});
 
@@ -131,6 +131,7 @@ export class KeyboardHandler {
 				if (!canvas) return false;
 				const node = this.canvasApi.getSelectedNode(canvas);
 				if (!node) return false;
+				if (!this.canvasApi.getParentNode(canvas, node)) return false;
 				if (checking) return true;
 
 				this.onBeforeLeaveNode?.();
@@ -184,8 +185,6 @@ export class KeyboardHandler {
 				const children = this.canvasApi.getChildNodes(canvas, node);
 				if (children.length < 2) return false;
 				if (checking) return true;
-
-				this.onBeforeLeaveNode?.();
 
 				const nodeCx = node.x + node.width / 2;
 
@@ -388,9 +387,9 @@ export class KeyboardHandler {
 
 		const executeCommand = this.getCommandExecutor();
 		if (!executeCommand) return false;
+		if (!executeCommand(this.commandId("mindmap-add-sibling"))) return false;
 		event.preventDefault();
 		event.stopImmediatePropagation();
-		executeCommand(this.commandId("mindmap-add-sibling"));
 		return true;
 	}
 
@@ -401,9 +400,9 @@ export class KeyboardHandler {
 
 		const executeCommand = this.getCommandExecutor();
 		if (!executeCommand) return false;
+		if (!executeCommand(this.commandId("mindmap-add-child"))) return false;
 		event.preventDefault();
 		event.stopImmediatePropagation();
-		executeCommand(this.commandId("mindmap-add-child"));
 		return true;
 	}
 
@@ -417,40 +416,31 @@ export class KeyboardHandler {
 			["ArrowUp", this.commandId("mindmap-nav-prev-sibling")],
 		];
 
-		const entries = canvas.view.scope?.keys;
-		if (!entries) return;
-
 		for (const [key, commandId] of commandIds) {
-			const entry = entries.find(
-				(candidate) => candidate.key === key && candidate.modifiers === ""
-			);
-			if (!entry) continue;
-			const original = entry.func;
-			const replacement = (event: KeyboardEvent, context?: unknown): unknown => {
+			this.registerCanvasKeyOverride(canvas, key, (event) => {
 				const node = this.canvasApi.getSelectedNode(canvas);
-				if (!this.arrowKeyNavigationEnabled()
-					|| !this.isMindmapEnabled(canvas)
-					|| !node
-					|| isNodeEditorFocused(node)) {
-					return original(event, context);
-				}
+				if (!shouldUseNodeArrowNavigation(
+					this.arrowKeyNavigationEnabled(),
+					this.isMindmapEnabled(canvas),
+					!!node,
+					node?.isEditing ?? false,
+					node ? isNodeEditorFocused(node) : false
+				)) return false;
 
 				const executeCommand = this.getCommandExecutor();
-				if (!executeCommand) return original(event, context);
-				event.preventDefault();
+				if (!executeCommand) return false;
 				this.arrowKeySelectionOnly = true;
 				this.arrowNavigationCanvas = canvas;
+				let executed = false;
 				try {
-					executeCommand(commandId);
+					executed = executeCommand(commandId);
 				} finally {
 					this.arrowKeySelectionOnly = false;
 					this.arrowNavigationCanvas = null;
 				}
-				return false;
-			};
-			entry.func = replacement;
-			this.arrowKeyRestorers.push(() => {
-				if (entry.func === replacement) entry.func = original;
+				if (!executed) return false;
+				event.preventDefault();
+				return true;
 			});
 		}
 
@@ -470,16 +460,7 @@ export class KeyboardHandler {
 		const win = canvas.wrapperEl.win;
 		const keydownHandler = (event: KeyboardEvent): void => {
 			if (this.canvasApi.getActiveCanvas() !== canvas) return;
-			const target = event.target;
-			const doc = win.document;
-			if (!isCanvasKeyboardContext({
-				target,
-				windowTarget: win,
-				documentTarget: doc,
-				bodyTarget: doc.body,
-				documentElementTarget: doc.documentElement,
-				isInsideCanvas: isDomNode(target) && canvas.wrapperEl.contains(target),
-			})) return;
+			if (!this.isCanvasKeyboardTarget(canvas, event.target)) return;
 
 			this.handleEditingStateShortcut(canvas, event);
 		};
@@ -508,17 +489,52 @@ export class KeyboardHandler {
 		if (!shouldExitEditingOnEscape(event, node.isEditing)) return false;
 		event.preventDefault();
 		event.stopImmediatePropagation();
+		this.finishEditing(canvas, node);
+		return true;
+	}
+
+	finishEditing(canvas: Canvas, node: CanvasNode, restoreFocus = true): void {
 		this.onBeforeLeaveNode?.();
 		node.blur();
-		canvas.wrapperEl.win.setTimeout(() => {
-			if (
-				this.canvasApi.getActiveCanvas() !== canvas
-				|| !canvas.selection.has(node)
-				|| node.isEditing
-			) return;
-			focusCanvasKeyboardTarget(canvas.wrapperEl);
-		}, 0);
-		return true;
+		if (restoreFocus) this.scheduleCanvasFocusRestore(canvas, node);
+	}
+
+	private scheduleCanvasFocusRestore(canvas: Canvas, node: CanvasNode): void {
+		this.cancelPendingFocusRestore();
+		const win = canvas.wrapperEl.win;
+		const pending = {
+			win,
+			id: win.setTimeout(() => {
+				if (this.pendingFocusRestore !== pending) return;
+				this.pendingFocusRestore = null;
+				if (
+					this.canvasApi.getActiveCanvas() !== canvas
+					|| !canvas.selection.has(node)
+					|| node.isEditing
+				) return;
+				focusCanvasKeyboardTarget(canvas.wrapperEl);
+			}, 0),
+		};
+		this.pendingFocusRestore = pending;
+	}
+
+	private cancelPendingFocusRestore(): void {
+		if (!this.pendingFocusRestore) return;
+		this.pendingFocusRestore.win.clearTimeout(this.pendingFocusRestore.id);
+		this.pendingFocusRestore = null;
+	}
+
+	private isCanvasKeyboardTarget(canvas: Canvas, target: unknown): boolean {
+		const win = canvas.wrapperEl.win;
+		const doc = win.document;
+		return isCanvasKeyboardContext({
+			target,
+			windowTarget: win,
+			documentTarget: doc,
+			bodyTarget: doc.body,
+			documentElementTarget: doc.documentElement,
+			isInsideCanvas: isDomNode(target) && canvas.wrapperEl.contains(target),
+		});
 	}
 
 	private registerCanvasKeyOverride(
@@ -550,6 +566,7 @@ export class KeyboardHandler {
 	}
 
 	unregisterArrowKeyNavigation(): void {
+		this.cancelPendingFocusRestore();
 		for (const restore of this.arrowKeyRestorers) restore();
 		this.arrowKeyRestorers = [];
 		this.arrowNavigationCanvas = null;
@@ -600,24 +617,24 @@ export class KeyboardHandler {
 		const keydownHandler = (e: KeyboardEvent): void => {
 			const canvas = this.canvasApi.getActiveCanvas();
 			if (!canvas) return;
+			if (!this.isCanvasKeyboardTarget(canvas, e.target)) return;
 			const ctrlOrCmd = Platform.isMacOS ? e.metaKey : e.ctrlKey;
 			if (!ctrlOrCmd) return;
 
 			// Undo/Redo fallback for non-Latin layouts
 			if (e.code === "KeyZ" && !e.altKey && e.key.toLowerCase() !== "z") {
+				const undoOrRedo = e.shiftKey ? canvas.redo : canvas.undo;
+				if (!undoOrRedo) return;
 				e.preventDefault();
 				e.stopPropagation();
-				if (e.shiftKey) {
-					canvas.redo?.();
-				} else {
-					canvas.undo?.();
-				}
+				undoOrRedo.call(canvas);
 				return;
 			}
 			if (e.code === "KeyY" && !e.shiftKey && !e.altKey && e.key.toLowerCase() !== "y") {
+				if (!canvas.redo) return;
 				e.preventDefault();
 				e.stopPropagation();
-				canvas.redo?.();
+				canvas.redo();
 				return;
 			}
 
@@ -635,9 +652,9 @@ export class KeyboardHandler {
 					// hotkey system will handle it — don't double-fire
 					if (e.key.toLowerCase() === s.key) return;
 					// Non-Latin layout: Obsidian won't match, so we handle it
+					if (!executeCommand(s.cmdId)) return;
 					e.preventDefault();
 					e.stopPropagation();
-					executeCommand(s.cmdId);
 					return;
 				}
 			}

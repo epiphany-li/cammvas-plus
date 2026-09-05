@@ -4538,7 +4538,7 @@ var CanvasAPI = class {
     }
     canvas.wrapperEl.win.setTimeout(() => {
       var _a;
-      if (canvas.nodes.get(node.id) !== node || !((_a = node.nodeEl) == null ? void 0 : _a.isConnected) || !canvas.selection.has(node)) return;
+      if (this.getActiveCanvas() !== canvas || canvas.nodes.get(node.id) !== node || !((_a = node.nodeEl) == null ? void 0 : _a.isConnected) || !canvas.selection.has(node)) return;
       node.startEditing();
     }, 50);
   }
@@ -5691,6 +5691,9 @@ function isNodeEditorFocused(node) {
   const editor = (_a = node.child) == null ? void 0 : _a.editor;
   return typeof (editor == null ? void 0 : editor.hasFocus) === "function" && editor.hasFocus();
 }
+function shouldUseNodeArrowNavigation(enabled, isMindmap, hasSelectedNode, isEditing, isEditorFocused) {
+  return enabled && isMindmap && hasSelectedNode && !isEditing && !isEditorFocused;
+}
 
 // src/ui/plugin-command.ts
 function pluginCommandId(pluginId, localCommandId) {
@@ -5733,6 +5736,7 @@ var KeyboardHandler = class {
     this.arrowKeySelectionOnly = false;
     this.arrowNavigationCanvas = null;
     this.arrowKeyRestorers = [];
+    this.pendingFocusRestore = null;
   }
   register() {
     this.plugin.addCommand({
@@ -5742,7 +5746,7 @@ var KeyboardHandler = class {
         const canvas = this.canvasApi.getActiveCanvas();
         if (!canvas) return false;
         const activeEl = canvas.wrapperEl.doc.activeElement;
-        if (activeEl && !canvas.wrapperEl.contains(activeEl)) return false;
+        if (activeEl && !this.isCanvasKeyboardTarget(canvas, activeEl)) return false;
         const node = this.canvasApi.getSelectedNode(canvas);
         if (!node) return false;
         if (node.isEditing) return false;
@@ -5754,15 +5758,13 @@ var KeyboardHandler = class {
       id: "mindmap-save-node",
       name: "Save and exit edit mode",
       checkCallback: (checking) => {
-        var _a;
         const canvas = this.canvasApi.getActiveCanvas();
         if (!canvas) return false;
         const node = this.canvasApi.getSelectedNode(canvas);
         if (!node) return false;
         if (!node.isEditing) return false;
         if (checking) return true;
-        (_a = this.onBeforeLeaveNode) == null ? void 0 : _a.call(this);
-        node.blur();
+        this.finishEditing(canvas, node);
       }
     });
     this.plugin.addCommand({
@@ -5798,6 +5800,7 @@ var KeyboardHandler = class {
         if (!canvas) return false;
         const node = this.canvasApi.getSelectedNode(canvas);
         if (!node) return false;
+        if (!this.canvasApi.getParentNode(canvas, node)) return false;
         if (checking) return true;
         (_a = this.onBeforeLeaveNode) == null ? void 0 : _a.call(this);
         const parent = this.nodeOps.deleteAndFocusParent(canvas, node);
@@ -5838,7 +5841,6 @@ var KeyboardHandler = class {
       id: "mindmap-toggle-balance",
       name: "Toggle balanced layout",
       checkCallback: (checking) => {
-        var _a;
         const canvas = this.canvasApi.getActiveCanvas();
         if (!canvas) return false;
         if (!this.isMindmapEnabled(canvas)) return false;
@@ -5847,7 +5849,6 @@ var KeyboardHandler = class {
         const children = this.canvasApi.getChildNodes(canvas, node);
         if (children.length < 2) return false;
         if (checking) return true;
-        (_a = this.onBeforeLeaveNode) == null ? void 0 : _a.call(this);
         const nodeCx = node.x + node.width / 2;
         let allRight = true;
         let allLeft = true;
@@ -6007,9 +6008,9 @@ var KeyboardHandler = class {
     if (!shouldCreateSiblingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) return false;
     const executeCommand = this.getCommandExecutor();
     if (!executeCommand) return false;
+    if (!executeCommand(this.commandId("mindmap-add-sibling"))) return false;
     event.preventDefault();
     event.stopImmediatePropagation();
-    executeCommand(this.commandId("mindmap-add-sibling"));
     return true;
   }
   handleChildTab(canvas, event) {
@@ -6018,13 +6019,12 @@ var KeyboardHandler = class {
     if (!shouldCreateChildOnTab(event, this.enterCreatesSiblingEnabled(), true)) return false;
     const executeCommand = this.getCommandExecutor();
     if (!executeCommand) return false;
+    if (!executeCommand(this.commandId("mindmap-add-child"))) return false;
     event.preventDefault();
     event.stopImmediatePropagation();
-    executeCommand(this.commandId("mindmap-add-child"));
     return true;
   }
   registerArrowKeyNavigation(canvas) {
-    var _a;
     this.unregisterArrowKeyNavigation();
     this.registerEditingStateShortcuts(canvas);
     const commandIds = [
@@ -6033,35 +6033,31 @@ var KeyboardHandler = class {
       ["ArrowDown", this.commandId("mindmap-nav-next-sibling")],
       ["ArrowUp", this.commandId("mindmap-nav-prev-sibling")]
     ];
-    const entries = (_a = canvas.view.scope) == null ? void 0 : _a.keys;
-    if (!entries) return;
     for (const [key, commandId] of commandIds) {
-      const entry = entries.find(
-        (candidate) => candidate.key === key && candidate.modifiers === ""
-      );
-      if (!entry) continue;
-      const original = entry.func;
-      const replacement = (event, context) => {
+      this.registerCanvasKeyOverride(canvas, key, (event) => {
+        var _a;
         const node = this.canvasApi.getSelectedNode(canvas);
-        if (!this.arrowKeyNavigationEnabled() || !this.isMindmapEnabled(canvas) || !node || isNodeEditorFocused(node)) {
-          return original(event, context);
-        }
+        if (!shouldUseNodeArrowNavigation(
+          this.arrowKeyNavigationEnabled(),
+          this.isMindmapEnabled(canvas),
+          !!node,
+          (_a = node == null ? void 0 : node.isEditing) != null ? _a : false,
+          node ? isNodeEditorFocused(node) : false
+        )) return false;
         const executeCommand = this.getCommandExecutor();
-        if (!executeCommand) return original(event, context);
-        event.preventDefault();
+        if (!executeCommand) return false;
         this.arrowKeySelectionOnly = true;
         this.arrowNavigationCanvas = canvas;
+        let executed = false;
         try {
-          executeCommand(commandId);
+          executed = executeCommand(commandId);
         } finally {
           this.arrowKeySelectionOnly = false;
           this.arrowNavigationCanvas = null;
         }
-        return false;
-      };
-      entry.func = replacement;
-      this.arrowKeyRestorers.push(() => {
-        if (entry.func === replacement) entry.func = original;
+        if (!executed) return false;
+        event.preventDefault();
+        return true;
       });
     }
     this.registerCanvasKeyOverride(
@@ -6079,16 +6075,7 @@ var KeyboardHandler = class {
     const win = canvas.wrapperEl.win;
     const keydownHandler = (event) => {
       if (this.canvasApi.getActiveCanvas() !== canvas) return;
-      const target = event.target;
-      const doc = win.document;
-      if (!isCanvasKeyboardContext({
-        target,
-        windowTarget: win,
-        documentTarget: doc,
-        bodyTarget: doc.body,
-        documentElementTarget: doc.documentElement,
-        isInsideCanvas: isDomNode(target) && canvas.wrapperEl.contains(target)
-      })) return;
+      if (!this.isCanvasKeyboardTarget(canvas, event.target)) return;
       this.handleEditingStateShortcut(canvas, event);
     };
     win.addEventListener("keydown", keydownHandler, true);
@@ -6097,7 +6084,6 @@ var KeyboardHandler = class {
     });
   }
   handleEditingStateShortcut(canvas, event) {
-    var _a;
     if (this.canvasApi.getActiveCanvas() !== canvas) return false;
     const node = this.canvasApi.getSelectedNode(canvas);
     if (!node || !this.isMindmapEnabled(canvas)) return false;
@@ -6110,13 +6096,45 @@ var KeyboardHandler = class {
     if (!shouldExitEditingOnEscape(event, node.isEditing)) return false;
     event.preventDefault();
     event.stopImmediatePropagation();
+    this.finishEditing(canvas, node);
+    return true;
+  }
+  finishEditing(canvas, node, restoreFocus = true) {
+    var _a;
     (_a = this.onBeforeLeaveNode) == null ? void 0 : _a.call(this);
     node.blur();
-    canvas.wrapperEl.win.setTimeout(() => {
-      if (this.canvasApi.getActiveCanvas() !== canvas || !canvas.selection.has(node) || node.isEditing) return;
-      focusCanvasKeyboardTarget(canvas.wrapperEl);
-    }, 0);
-    return true;
+    if (restoreFocus) this.scheduleCanvasFocusRestore(canvas, node);
+  }
+  scheduleCanvasFocusRestore(canvas, node) {
+    this.cancelPendingFocusRestore();
+    const win = canvas.wrapperEl.win;
+    const pending = {
+      win,
+      id: win.setTimeout(() => {
+        if (this.pendingFocusRestore !== pending) return;
+        this.pendingFocusRestore = null;
+        if (this.canvasApi.getActiveCanvas() !== canvas || !canvas.selection.has(node) || node.isEditing) return;
+        focusCanvasKeyboardTarget(canvas.wrapperEl);
+      }, 0)
+    };
+    this.pendingFocusRestore = pending;
+  }
+  cancelPendingFocusRestore() {
+    if (!this.pendingFocusRestore) return;
+    this.pendingFocusRestore.win.clearTimeout(this.pendingFocusRestore.id);
+    this.pendingFocusRestore = null;
+  }
+  isCanvasKeyboardTarget(canvas, target) {
+    const win = canvas.wrapperEl.win;
+    const doc = win.document;
+    return isCanvasKeyboardContext({
+      target,
+      windowTarget: win,
+      documentTarget: doc,
+      bodyTarget: doc.body,
+      documentElementTarget: doc.documentElement,
+      isInsideCanvas: isDomNode(target) && canvas.wrapperEl.contains(target)
+    });
   }
   registerCanvasKeyOverride(canvas, key, handle) {
     const scope = canvas.view.scope;
@@ -6141,6 +6159,7 @@ var KeyboardHandler = class {
     this.arrowKeyRestorers.push(() => scope.unregister(entry));
   }
   unregisterArrowKeyNavigation() {
+    this.cancelPendingFocusRestore();
     for (const restore of this.arrowKeyRestorers) restore();
     this.arrowKeyRestorers = [];
     this.arrowNavigationCanvas = null;
@@ -6186,25 +6205,24 @@ var KeyboardHandler = class {
       { code: "KeyR", key: "r", ctrl: true, shift: true, alt: true, cmdId: this.commandId("mindmap-resize-all") }
     ];
     const keydownHandler = (e) => {
-      var _a, _b, _c;
       const canvas = this.canvasApi.getActiveCanvas();
       if (!canvas) return;
+      if (!this.isCanvasKeyboardTarget(canvas, e.target)) return;
       const ctrlOrCmd = import_obsidian3.Platform.isMacOS ? e.metaKey : e.ctrlKey;
       if (!ctrlOrCmd) return;
       if (e.code === "KeyZ" && !e.altKey && e.key.toLowerCase() !== "z") {
+        const undoOrRedo = e.shiftKey ? canvas.redo : canvas.undo;
+        if (!undoOrRedo) return;
         e.preventDefault();
         e.stopPropagation();
-        if (e.shiftKey) {
-          (_a = canvas.redo) == null ? void 0 : _a.call(canvas);
-        } else {
-          (_b = canvas.undo) == null ? void 0 : _b.call(canvas);
-        }
+        undoOrRedo.call(canvas);
         return;
       }
       if (e.code === "KeyY" && !e.shiftKey && !e.altKey && e.key.toLowerCase() !== "y") {
+        if (!canvas.redo) return;
         e.preventDefault();
         e.stopPropagation();
-        (_c = canvas.redo) == null ? void 0 : _c.call(canvas);
+        canvas.redo();
         return;
       }
       const executeCommand = this.getCommandExecutor();
@@ -6212,9 +6230,9 @@ var KeyboardHandler = class {
       for (const s of shortcuts) {
         if (e.code === s.code && ctrlOrCmd === s.ctrl && e.shiftKey === s.shift && e.altKey === s.alt) {
           if (e.key.toLowerCase() === s.key) return;
+          if (!executeCommand(s.cmdId)) return;
           e.preventDefault();
           e.stopPropagation();
-          executeCommand(s.cmdId);
           return;
         }
       }
@@ -22928,6 +22946,14 @@ function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKe
   };
 }
 
+// src/ui/navigation-history.ts
+function findNavigableHistoryIndex(history, startIndex, direction, nodeExists) {
+  for (let index = startIndex + direction; index >= 0 && index < history.length; index += direction) {
+    if (nodeExists(history[index])) return index;
+  }
+  return null;
+}
+
 // src/ui/outline-view.ts
 var import_obsidian8 = require("obsidian");
 
@@ -24431,32 +24457,40 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.navHistoryIndex = this.navHistory.length - 1;
   }
   navigateBack(canvas) {
-    var _a, _b;
-    if (this.navHistoryIndex <= 0) return;
-    (_b = (_a = this.keyboardHandler) == null ? void 0 : _a.onBeforeLeaveNode) == null ? void 0 : _b.call(_a);
-    this.navSkipTracking = true;
-    this.navHistoryIndex--;
-    const nodeId = this.navHistory[this.navHistoryIndex];
-    const node = canvas.nodes.get(nodeId);
-    if (!node) {
-      this.navSkipTracking = false;
-      return;
+    const targetIndex = findNavigableHistoryIndex(
+      this.navHistory,
+      this.navHistoryIndex,
+      -1,
+      (nodeId) => canvas.nodes.has(nodeId)
+    );
+    if (targetIndex === null) return;
+    const node = canvas.nodes.get(this.navHistory[targetIndex]);
+    if (!node) return;
+    const editingNode = this.canvasApi.getSelectedNode(canvas);
+    if (editingNode == null ? void 0 : editingNode.isEditing) {
+      this.keyboardHandler.finishEditing(canvas, editingNode, false);
     }
+    this.navSkipTracking = true;
+    this.navHistoryIndex = targetIndex;
     this.canvasApi.selectAndZoom(canvas, node, this.settings.navigationZoomPadding);
     this.navSkipTracking = false;
   }
   navigateForward(canvas) {
-    var _a, _b;
-    if (this.navHistoryIndex >= this.navHistory.length - 1) return;
-    (_b = (_a = this.keyboardHandler) == null ? void 0 : _a.onBeforeLeaveNode) == null ? void 0 : _b.call(_a);
-    this.navSkipTracking = true;
-    this.navHistoryIndex++;
-    const nodeId = this.navHistory[this.navHistoryIndex];
-    const node = canvas.nodes.get(nodeId);
-    if (!node) {
-      this.navSkipTracking = false;
-      return;
+    const targetIndex = findNavigableHistoryIndex(
+      this.navHistory,
+      this.navHistoryIndex,
+      1,
+      (nodeId) => canvas.nodes.has(nodeId)
+    );
+    if (targetIndex === null) return;
+    const node = canvas.nodes.get(this.navHistory[targetIndex]);
+    if (!node) return;
+    const editingNode = this.canvasApi.getSelectedNode(canvas);
+    if (editingNode == null ? void 0 : editingNode.isEditing) {
+      this.keyboardHandler.finishEditing(canvas, editingNode, false);
     }
+    this.navSkipTracking = true;
+    this.navHistoryIndex = targetIndex;
     this.canvasApi.selectAndZoom(canvas, node, this.settings.navigationZoomPadding);
     this.navSkipTracking = false;
   }
@@ -24877,9 +24911,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
           transferSelection: false
         }),
         (node) => {
-          var _a2, _b2;
-          (_b2 = (_a2 = this.keyboardHandler).onBeforeLeaveNode) == null ? void 0 : _b2.call(_a2);
-          node.blur();
+          this.keyboardHandler.finishEditing(canvas, node, false);
         }
       );
     }
@@ -25654,7 +25686,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     );
   }
   relayoutSelectedBranch(canvas, branchParent) {
-    var _a, _b;
+    var _a;
     if (!this.isMindmapCanvas(canvas)) {
       new import_obsidian10.Notice("Enable mindmap mode before re-layout");
       return;
@@ -25668,10 +25700,9 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       new import_obsidian10.Notice("The selected node has no child branch to re-layout");
       return;
     }
-    (_a = this.autoResizeHandle) == null ? void 0 : _a.finalizeNode();
     this.layoutEngine.layoutChildren(canvas, node.id);
     this.updateGroupBounds(canvas);
-    (_b = this.branchCollapseHandle) == null ? void 0 : _b.refresh();
+    (_a = this.branchCollapseHandle) == null ? void 0 : _a.refresh();
   }
   /** Schedule a setTimeout that is automatically cancelled on unload/canvas switch. */
   trackedTimeout(win, callback, ms) {
