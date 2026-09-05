@@ -5683,6 +5683,11 @@ function isNodeEditorFocused(node) {
   return typeof (editor == null ? void 0 : editor.hasFocus) === "function" && editor.hasFocus();
 }
 
+// src/ui/plugin-command.ts
+function pluginCommandId(pluginId, localCommandId) {
+  return `${pluginId}:${localCommandId}`;
+}
+
 // src/ui/keyboard-handler.ts
 var KeyboardHandler = class {
   constructor(plugin, canvasApi, nodeOps, layoutEngine, branchColors, autoColorEnabled, autoLayoutEnabled, autoLayoutOnEditEnabled, arrowKeyNavigationEnabled, centerNodeOnArrowNavigation, enterCreatesSiblingEnabled, isMindmapEnabled = () => true, onNodesChanged = () => {
@@ -5983,7 +5988,7 @@ var KeyboardHandler = class {
     if (!executeCommand) return false;
     event.preventDefault();
     event.stopImmediatePropagation();
-    executeCommand("cammvas:mindmap-add-sibling");
+    executeCommand(this.commandId("mindmap-add-sibling"));
     return true;
   }
   handleChildTab(canvas, event) {
@@ -5994,17 +5999,17 @@ var KeyboardHandler = class {
     if (!executeCommand) return false;
     event.preventDefault();
     event.stopImmediatePropagation();
-    executeCommand("cammvas:mindmap-add-child");
+    executeCommand(this.commandId("mindmap-add-child"));
     return true;
   }
   registerArrowKeyNavigation(canvas) {
     var _a;
     this.unregisterArrowKeyNavigation();
     const commandIds = [
-      ["ArrowRight", "cammvas:mindmap-nav-right"],
-      ["ArrowLeft", "cammvas:mindmap-nav-left"],
-      ["ArrowDown", "cammvas:mindmap-nav-next-sibling"],
-      ["ArrowUp", "cammvas:mindmap-nav-prev-sibling"]
+      ["ArrowRight", this.commandId("mindmap-nav-right")],
+      ["ArrowLeft", this.commandId("mindmap-nav-left")],
+      ["ArrowDown", this.commandId("mindmap-nav-next-sibling")],
+      ["ArrowUp", this.commandId("mindmap-nav-prev-sibling")]
     ];
     const entries = (_a = canvas.view.scope) == null ? void 0 : _a.keys;
     if (!entries) return;
@@ -6108,12 +6113,12 @@ var KeyboardHandler = class {
    */
   registerPhysicalKeyShortcuts() {
     const shortcuts = [
-      { code: "Period", key: ".", ctrl: true, shift: false, alt: false, cmdId: "cammvas:mindmap-add-child" },
-      { code: "KeyS", key: "s", ctrl: true, shift: false, alt: false, cmdId: "cammvas:mindmap-save-node" },
-      { code: "KeyS", key: "s", ctrl: true, shift: true, alt: false, cmdId: "cammvas:mindmap-flip-branch" },
-      { code: "KeyD", key: "d", ctrl: true, shift: true, alt: false, cmdId: "cammvas:mindmap-toggle-balance" },
-      { code: "KeyL", key: "l", ctrl: true, shift: true, alt: false, cmdId: "cammvas:mindmap-resize-subtree" },
-      { code: "KeyR", key: "r", ctrl: true, shift: true, alt: true, cmdId: "cammvas:mindmap-resize-all" }
+      { code: "Period", key: ".", ctrl: true, shift: false, alt: false, cmdId: this.commandId("mindmap-add-child") },
+      { code: "KeyS", key: "s", ctrl: true, shift: false, alt: false, cmdId: this.commandId("mindmap-save-node") },
+      { code: "KeyS", key: "s", ctrl: true, shift: true, alt: false, cmdId: this.commandId("mindmap-flip-branch") },
+      { code: "KeyD", key: "d", ctrl: true, shift: true, alt: false, cmdId: this.commandId("mindmap-toggle-balance") },
+      { code: "KeyL", key: "l", ctrl: true, shift: true, alt: false, cmdId: this.commandId("mindmap-resize-subtree") },
+      { code: "KeyR", key: "r", ctrl: true, shift: true, alt: true, cmdId: this.commandId("mindmap-resize-all") }
     ];
     const keydownHandler = (e) => {
       var _a, _b, _c;
@@ -6161,6 +6166,9 @@ var KeyboardHandler = class {
     const app = this.plugin.app;
     if (!this.hasCommandExecutor(app)) return null;
     return (id) => Boolean(app.commands.executeCommandById(id));
+  }
+  commandId(localCommandId) {
+    return pluginCommandId(this.plugin.manifest.id, localCommandId);
   }
   hasCommandExecutor(value) {
     if (typeof value !== "object" || value === null || !("commands" in value)) return false;
