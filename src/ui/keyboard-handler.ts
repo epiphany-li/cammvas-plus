@@ -25,6 +25,7 @@ import {
 import { isNodeEditorFocused } from "./editing-state";
 import { pluginCommandId } from "./plugin-command";
 import { isDomNode } from "./dom";
+import { focusCanvasKeyboardTarget } from "./canvas-keyboard-focus";
 
 /**
  * Registers all mind map keyboard shortcuts on the canvas.
@@ -480,22 +481,7 @@ export class KeyboardHandler {
 				isInsideCanvas: isDomNode(target) && canvas.wrapperEl.contains(target),
 			})) return;
 
-			const node = this.canvasApi.getSelectedNode(canvas);
-			if (!node || !this.isMindmapEnabled(canvas)) return;
-
-			if (shouldStartEditingOnSpace(event, node.isEditing)) {
-				event.preventDefault();
-				event.stopImmediatePropagation();
-				node.startEditing();
-				return;
-			}
-
-			if (shouldExitEditingOnEscape(event, node.isEditing)) {
-				event.preventDefault();
-				event.stopImmediatePropagation();
-				this.onBeforeLeaveNode?.();
-				node.blur();
-			}
+			this.handleEditingStateShortcut(canvas, event);
 		};
 
 		// Arrow-key navigation changes Canvas selection without necessarily moving
@@ -505,6 +491,34 @@ export class KeyboardHandler {
 		this.arrowKeyRestorers.push(() => {
 			win.removeEventListener("keydown", keydownHandler, true);
 		});
+	}
+
+	handleEditingStateShortcut(canvas: Canvas, event: KeyboardEvent): boolean {
+		if (this.canvasApi.getActiveCanvas() !== canvas) return false;
+		const node = this.canvasApi.getSelectedNode(canvas);
+		if (!node || !this.isMindmapEnabled(canvas)) return false;
+
+		if (shouldStartEditingOnSpace(event, node.isEditing)) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			node.startEditing();
+			return true;
+		}
+
+		if (!shouldExitEditingOnEscape(event, node.isEditing)) return false;
+		event.preventDefault();
+		event.stopImmediatePropagation();
+		this.onBeforeLeaveNode?.();
+		node.blur();
+		canvas.wrapperEl.win.setTimeout(() => {
+			if (
+				this.canvasApi.getActiveCanvas() !== canvas
+				|| !canvas.selection.has(node)
+				|| node.isEditing
+			) return;
+			focusCanvasKeyboardTarget(canvas.wrapperEl);
+		}, 0);
+		return true;
 	}
 
 	private registerCanvasKeyOverride(

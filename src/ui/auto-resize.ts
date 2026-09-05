@@ -46,7 +46,8 @@ export function registerAutoResize(
 	canvas: Canvas,
 	config: AutoResizeConfig,
 	onEditExit?: (canvas: Canvas, node: CanvasNode) => void,
-	onTextChange?: (canvas: Canvas, node: CanvasNode) => void
+	onTextChange?: (canvas: Canvas, node: CanvasNode) => void,
+	onEditorKeydown?: (event: KeyboardEvent, canvas: Canvas, node: CanvasNode) => boolean
 ): AutoResizeHandle {
 	let activeNode: CanvasNode | null = null;
 	let observer: MutationObserver | null = null;
@@ -126,6 +127,7 @@ export function registerAutoResize(
 		inputHandler = handler;
 		cachedInputTarget.addEventListener("input", handler);
 		keydownHandler = (event: KeyboardEvent) => {
+			if (onEditorKeydown?.(event, canvas, node)) return;
 			if (event.key === "Enter") onTextChange?.(canvas, node);
 		};
 		cachedInputTarget.addEventListener("keydown", keydownHandler, true);

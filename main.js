@@ -5697,6 +5697,18 @@ function pluginCommandId(pluginId, localCommandId) {
   return `${pluginId}:${localCommandId}`;
 }
 
+// src/ui/canvas-keyboard-focus.ts
+function focusCanvasKeyboardTarget(target) {
+  const previousTabIndex = target.getAttribute("tabindex");
+  if (previousTabIndex === null) target.setAttribute("tabindex", "-1");
+  target.focus({ preventScroll: true });
+  if (previousTabIndex === null) {
+    target.removeAttribute("tabindex");
+  } else {
+    target.setAttribute("tabindex", previousTabIndex);
+  }
+}
+
 // src/ui/keyboard-handler.ts
 var KeyboardHandler = class {
   constructor(plugin, canvasApi, nodeOps, layoutEngine, branchColors, autoColorEnabled, autoLayoutEnabled, autoLayoutOnEditEnabled, arrowKeyNavigationEnabled, centerNodeOnArrowNavigation, enterCreatesSiblingEnabled, isMindmapEnabled = () => true, onNodesChanged = () => {
@@ -6066,7 +6078,6 @@ var KeyboardHandler = class {
   registerEditingStateShortcuts(canvas) {
     const win = canvas.wrapperEl.win;
     const keydownHandler = (event) => {
-      var _a;
       if (this.canvasApi.getActiveCanvas() !== canvas) return;
       const target = event.target;
       const doc = win.document;
@@ -6078,25 +6089,34 @@ var KeyboardHandler = class {
         documentElementTarget: doc.documentElement,
         isInsideCanvas: isDomNode(target) && canvas.wrapperEl.contains(target)
       })) return;
-      const node = this.canvasApi.getSelectedNode(canvas);
-      if (!node || !this.isMindmapEnabled(canvas)) return;
-      if (shouldStartEditingOnSpace(event, node.isEditing)) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        node.startEditing();
-        return;
-      }
-      if (shouldExitEditingOnEscape(event, node.isEditing)) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        (_a = this.onBeforeLeaveNode) == null ? void 0 : _a.call(this);
-        node.blur();
-      }
+      this.handleEditingStateShortcut(canvas, event);
     };
     win.addEventListener("keydown", keydownHandler, true);
     this.arrowKeyRestorers.push(() => {
       win.removeEventListener("keydown", keydownHandler, true);
     });
+  }
+  handleEditingStateShortcut(canvas, event) {
+    var _a;
+    if (this.canvasApi.getActiveCanvas() !== canvas) return false;
+    const node = this.canvasApi.getSelectedNode(canvas);
+    if (!node || !this.isMindmapEnabled(canvas)) return false;
+    if (shouldStartEditingOnSpace(event, node.isEditing)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      node.startEditing();
+      return true;
+    }
+    if (!shouldExitEditingOnEscape(event, node.isEditing)) return false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    (_a = this.onBeforeLeaveNode) == null ? void 0 : _a.call(this);
+    node.blur();
+    canvas.wrapperEl.win.setTimeout(() => {
+      if (this.canvasApi.getActiveCanvas() !== canvas || !canvas.selection.has(node) || node.isEditing) return;
+      focusCanvasKeyboardTarget(canvas.wrapperEl);
+    }, 0);
+    return true;
   }
   registerCanvasKeyOverride(canvas, key, handle) {
     const scope = canvas.view.scope;
@@ -22756,7 +22776,7 @@ function getEditorElements(node) {
   const cmContent = container.querySelector(".cm-content");
   return { iframe, scroller, cmContent };
 }
-function registerAutoResize(canvas, config, onEditExit, onTextChange) {
+function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKeydown) {
   var _a, _b, _c;
   let activeNode = null;
   let observer = null;
@@ -22826,6 +22846,7 @@ function registerAutoResize(canvas, config, onEditExit, onTextChange) {
     inputHandler = handler;
     cachedInputTarget.addEventListener("input", handler);
     keydownHandler = (event) => {
+      if (onEditorKeydown == null ? void 0 : onEditorKeydown(event, canvas, node)) return;
       if (event.key === "Enter") onTextChange == null ? void 0 : onTextChange(canvas, node);
     };
     cachedInputTarget.addEventListener("keydown", keydownHandler, true);
@@ -24821,7 +24842,8 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
           });
         });
       },
-      (canvas2, editedNode) => this.queueOrderedListRenumber(canvas2, editedNode)
+      (canvas2, editedNode) => this.queueOrderedListRenumber(canvas2, editedNode),
+      (event, canvas2) => this.keyboardHandler.handleEditingStateShortcut(canvas2, event)
     );
     this.registerRenderedNodeAutoResize(canvas);
     this.keyboardHandler.onBeforeLeaveNode = () => {

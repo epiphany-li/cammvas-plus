@@ -988,7 +988,8 @@ export default class CanvasMindMapPlugin extends Plugin {
 					});
 				});
 			},
-			(canvas, editedNode) => this.queueOrderedListRenumber(canvas, editedNode)
+			(canvas, editedNode) => this.queueOrderedListRenumber(canvas, editedNode),
+			(event, canvas) => this.keyboardHandler.handleEditingStateShortcut(canvas, event)
 		);
 		this.registerRenderedNodeAutoResize(canvas);
 		this.keyboardHandler.onBeforeLeaveNode = () => {
