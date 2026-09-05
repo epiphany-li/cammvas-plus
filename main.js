@@ -5672,6 +5672,9 @@ function shouldCreateSiblingOnEnter(event, enabled, isEditing) {
 function shouldStartEditingOnEnter(event, enabled, isEditing) {
   return enabled && !isEditing && event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
 }
+function isCanvasKeyboardContext(context) {
+  return context.target === context.windowTarget || context.target === context.documentTarget || context.target === context.bodyTarget || context.target === context.documentElementTarget || context.isInsideCanvas;
+}
 function shouldStartEditingOnSpace(event, isEditing) {
   return !isEditing && (event.key === " " || event.key === "Spacebar") && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
 }
@@ -6061,8 +6064,20 @@ var KeyboardHandler = class {
     );
   }
   registerEditingStateShortcuts(canvas) {
+    const win = canvas.wrapperEl.win;
     const keydownHandler = (event) => {
       var _a;
+      if (this.canvasApi.getActiveCanvas() !== canvas) return;
+      const target = event.target;
+      const doc = win.document;
+      if (!isCanvasKeyboardContext({
+        target,
+        windowTarget: win,
+        documentTarget: doc,
+        bodyTarget: doc.body,
+        documentElementTarget: doc.documentElement,
+        isInsideCanvas: isDomNode(target) && canvas.wrapperEl.contains(target)
+      })) return;
       const node = this.canvasApi.getSelectedNode(canvas);
       if (!node || !this.isMindmapEnabled(canvas)) return;
       if (shouldStartEditingOnSpace(event, node.isEditing)) {
@@ -6078,9 +6093,9 @@ var KeyboardHandler = class {
         node.blur();
       }
     };
-    canvas.wrapperEl.addEventListener("keydown", keydownHandler, true);
+    win.addEventListener("keydown", keydownHandler, true);
     this.arrowKeyRestorers.push(() => {
-      canvas.wrapperEl.removeEventListener("keydown", keydownHandler, true);
+      win.removeEventListener("keydown", keydownHandler, true);
     });
   }
   registerCanvasKeyOverride(canvas, key, handle) {

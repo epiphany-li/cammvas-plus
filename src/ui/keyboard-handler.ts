@@ -15,6 +15,7 @@ import {
 } from "../mindmap/tree-model";
 import { findNearestNodeInDirection, SpatialDirection } from "./spatial-navigation";
 import {
+	isCanvasKeyboardContext,
 	shouldCreateChildOnTab,
 	shouldCreateSiblingOnEnter,
 	shouldExitEditingOnEscape,
@@ -23,6 +24,7 @@ import {
 } from "./editing-enter";
 import { isNodeEditorFocused } from "./editing-state";
 import { pluginCommandId } from "./plugin-command";
+import { isDomNode } from "./dom";
 
 /**
  * Registers all mind map keyboard shortcuts on the canvas.
@@ -464,7 +466,20 @@ export class KeyboardHandler {
 	}
 
 	private registerEditingStateShortcuts(canvas: Canvas): void {
+		const win = canvas.wrapperEl.win;
 		const keydownHandler = (event: KeyboardEvent): void => {
+			if (this.canvasApi.getActiveCanvas() !== canvas) return;
+			const target = event.target;
+			const doc = win.document;
+			if (!isCanvasKeyboardContext({
+				target,
+				windowTarget: win,
+				documentTarget: doc,
+				bodyTarget: doc.body,
+				documentElementTarget: doc.documentElement,
+				isInsideCanvas: isDomNode(target) && canvas.wrapperEl.contains(target),
+			})) return;
+
 			const node = this.canvasApi.getSelectedNode(canvas);
 			if (!node || !this.isMindmapEnabled(canvas)) return;
 
@@ -483,9 +498,12 @@ export class KeyboardHandler {
 			}
 		};
 
-		canvas.wrapperEl.addEventListener("keydown", keydownHandler, true);
+		// Arrow-key navigation changes Canvas selection without necessarily moving
+		// DOM focus. Capture at the window so a following Space still reaches us
+		// when the browser reports body/document as the keyboard event target.
+		win.addEventListener("keydown", keydownHandler, true);
 		this.arrowKeyRestorers.push(() => {
-			canvas.wrapperEl.removeEventListener("keydown", keydownHandler, true);
+			win.removeEventListener("keydown", keydownHandler, true);
 		});
 	}
 

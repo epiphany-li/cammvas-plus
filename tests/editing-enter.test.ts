@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	isCanvasKeyboardContext,
 	shouldCreateChildOnTab,
 	shouldCreateSiblingOnEnter,
 	shouldExitEditingOnEscape,
@@ -57,6 +58,32 @@ describe("shouldStartEditingOnSpace", () => {
 		expect(shouldStartEditingOnSpace(enterEvent({ key: " " }), true)).toBe(false);
 		expect(shouldStartEditingOnSpace(enterEvent({ key: " ", ctrlKey: true }), false)).toBe(false);
 		expect(shouldStartEditingOnSpace(enterEvent({ key: " ", isComposing: true }), false)).toBe(false);
+	});
+});
+
+describe("isCanvasKeyboardContext", () => {
+	const win = {};
+	const doc = {};
+	const body = {};
+	const documentElement = {};
+
+	const context = (target: unknown, isInsideCanvas = false) => ({
+		target,
+		windowTarget: win,
+		documentTarget: doc,
+		bodyTarget: body,
+		documentElementTarget: documentElement,
+		isInsideCanvas,
+	});
+
+	it("accepts body-level events left behind after arrow-key node navigation", () => {
+		expect(isCanvasKeyboardContext(context(body))).toBe(true);
+		expect(isCanvasKeyboardContext(context(documentElement))).toBe(true);
+	});
+
+	it("accepts Canvas descendants and rejects unrelated controls", () => {
+		expect(isCanvasKeyboardContext(context({}, true))).toBe(true);
+		expect(isCanvasKeyboardContext(context({}))).toBe(false);
 	});
 });
 
