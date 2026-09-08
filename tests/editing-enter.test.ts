@@ -4,7 +4,6 @@ import {
 	shouldCreateChildOnTab,
 	shouldCreateSiblingOnEnter,
 	shouldExitEditingOnEscape,
-	shouldStartEditingOnEnter,
 	shouldStartEditingOnSpace,
 } from "../src/ui/editing-enter";
 
@@ -21,30 +20,19 @@ function enterEvent(overrides: Partial<Parameters<typeof shouldCreateSiblingOnEn
 }
 
 describe("shouldCreateSiblingOnEnter", () => {
-	it("handles plain Enter while editing when enabled", () => {
-		expect(shouldCreateSiblingOnEnter(enterEvent(), true, true)).toBe(true);
+	it("creates a sibling on plain Enter from selected-node mode", () => {
+		expect(shouldCreateSiblingOnEnter(enterEvent(), true, false)).toBe(true);
 	});
 
-	it("leaves Shift+Enter available for new lines", () => {
+	it("leaves both Enter and Shift+Enter available to the text editor", () => {
+		expect(shouldCreateSiblingOnEnter(enterEvent(), true, true)).toBe(false);
 		expect(shouldCreateSiblingOnEnter(enterEvent({ shiftKey: true }), true, true)).toBe(false);
 	});
 
-	it("does not interfere when disabled, outside editing, or during composition", () => {
-		expect(shouldCreateSiblingOnEnter(enterEvent(), false, true)).toBe(false);
-		expect(shouldCreateSiblingOnEnter(enterEvent(), true, false)).toBe(false);
-		expect(shouldCreateSiblingOnEnter(enterEvent({ isComposing: true }), true, true)).toBe(false);
-	});
-});
-
-describe("shouldStartEditingOnEnter", () => {
-	it("handles plain Enter on a selected node when enabled", () => {
-		expect(shouldStartEditingOnEnter(enterEvent(), true, false)).toBe(true);
-	});
-
-	it("does not interfere while editing, when disabled, or with modifiers", () => {
-		expect(shouldStartEditingOnEnter(enterEvent(), true, true)).toBe(false);
-		expect(shouldStartEditingOnEnter(enterEvent(), false, false)).toBe(false);
-		expect(shouldStartEditingOnEnter(enterEvent({ shiftKey: true }), true, false)).toBe(false);
+	it("does not interfere when disabled, modified, or during composition", () => {
+		expect(shouldCreateSiblingOnEnter(enterEvent(), false, false)).toBe(false);
+		expect(shouldCreateSiblingOnEnter(enterEvent({ shiftKey: true }), true, false)).toBe(false);
+		expect(shouldCreateSiblingOnEnter(enterEvent({ isComposing: true }), true, false)).toBe(false);
 	});
 });
 

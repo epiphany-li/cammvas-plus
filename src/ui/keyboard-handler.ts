@@ -19,7 +19,6 @@ import {
 	shouldCreateChildOnTab,
 	shouldCreateSiblingOnEnter,
 	shouldExitEditingOnEscape,
-	shouldStartEditingOnEnter,
 	shouldStartEditingOnSpace,
 } from "./editing-enter";
 import { isNodeEditorFocused, shouldUseNodeArrowNavigation } from "./editing-state";
@@ -57,7 +56,7 @@ export class KeyboardHandler {
 	) {}
 
 	register(): void {
-		// Enter → Edit selected node (cursor at end)
+		// Command-palette action for editing the selected node.
 		this.plugin.addCommand({
 			id: "mindmap-edit-node",
 			name: "Edit selected node",
@@ -377,12 +376,6 @@ export class KeyboardHandler {
 	handleEnter(canvas: Canvas, event: KeyboardEvent): boolean {
 		const node = this.canvasApi.getSelectedNode(canvas);
 		if (!node || !this.isMindmapEnabled(canvas)) return false;
-		if (shouldStartEditingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) {
-			event.preventDefault();
-			event.stopImmediatePropagation();
-			node.startEditing();
-			return true;
-		}
 		if (!shouldCreateSiblingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) return false;
 
 		const executeCommand = this.getCommandExecutor();

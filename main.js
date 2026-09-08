@@ -5667,9 +5667,6 @@ function registerBranchCollapse(canvas, canvasApi) {
 
 // src/ui/editing-enter.ts
 function shouldCreateSiblingOnEnter(event, enabled, isEditing) {
-  return enabled && isEditing && event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
-}
-function shouldStartEditingOnEnter(event, enabled, isEditing) {
   return enabled && !isEditing && event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
 }
 function isCanvasKeyboardContext(context) {
@@ -5999,12 +5996,6 @@ var KeyboardHandler = class {
   handleEnter(canvas, event) {
     const node = this.canvasApi.getSelectedNode(canvas);
     if (!node || !this.isMindmapEnabled(canvas)) return false;
-    if (shouldStartEditingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      node.startEditing();
-      return true;
-    }
     if (!shouldCreateSiblingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) return false;
     const executeCommand = this.getCommandExecutor();
     if (!executeCommand) return false;
@@ -6532,7 +6523,7 @@ var MindMapSettingTab = class extends import_obsidian4.PluginSettingTab {
       { name: "Drag to reparent", desc: import_obsidian4.Platform.isMobile ? "Long-press and drag a node onto another node to make it a child while preserving its branch" : "Drop a node onto another node to make it a child while preserving its branch", control: { type: "toggle", key: "dragToReparent" } },
       { name: "Auto-layout after reparent", desc: "Automatically arrange the subtree after dragging a node onto a new parent", control: { type: "toggle", key: "autoLayoutOnReparent" } },
       { name: "Auto-layout on manual edits", desc: "Also re-arrange the subtree after editing text, deleting, detaching, or manually moving a node \u2014 not just when Cammvas creates nodes", control: { type: "toggle", key: "autoLayoutOnEdit" } },
-      { name: "Mind mapping Enter and Tab", desc: import_obsidian4.Platform.isMobile ? "Use Enter and Tab from a hardware keyboard to create sibling and child nodes" : "Enter creates a sibling while editing, Tab creates a child, and Shift+Enter inserts a new line", control: { type: "toggle", key: "enterCreatesSibling" } },
+      { name: "Mind mapping Enter and Tab", desc: import_obsidian4.Platform.isMobile ? "Use Enter and Tab from a hardware keyboard to create sibling and child nodes outside editing" : "Outside editing, Enter creates a sibling and Tab creates a child; inside editing, Enter inserts a new line", control: { type: "toggle", key: "enterCreatesSibling" } },
       { name: "Horizontal gap", desc: "Space between parent and child nodes (px)", control: positiveNumber("horizontalGap") },
       { name: "Vertical gap", desc: "Space between sibling nodes (px)", control: positiveNumber("verticalGap") },
       { name: "Default node width", desc: "Width of newly created nodes (px)", control: positiveNumber("defaultNodeWidth") },

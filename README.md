@@ -29,7 +29,7 @@ Cammvas adds the interactions people expect from standalone mind-mapping softwar
 
 ## What Cammvas Adds
 
-- **Mind-map keyboard workflow:** `Space` edits the selected node, `Escape` or an outside click exits editing, `Enter` creates a sibling, `Tab` creates a child, `Shift + Enter` inserts a line break, and arrow keys navigate the tree.
+- **Mind-map keyboard workflow:** outside editing, `Space` edits the selected node, `Enter` creates a sibling, `Tab` creates a child, and arrow keys navigate the tree; while editing, `Enter` and `Space` behave as normal text input, and `Escape` or an outside click exits editing.
 - **Drag to create branches:** drop one or multiple selected nodes onto another node to reparent their complete branches, with cycle prevention and a highlighted target.
 - **Collapsible branches:** fold and restore complete descendant trees directly from their parent nodes.
 - **Automatic tree layout:** compact contour-based placement with left, right, and balanced branches.
@@ -53,7 +53,7 @@ All behavior can be configured under **Settings > Cammvas Plus**.
 
 ## Keyboard Workflow
 
-Press `Space` on a selected node to enter editing. While editing, `Space` remains a normal text space; press `Escape` or click outside the node to finish. When **Mind mapping Enter and Tab** is enabled, plain `Enter` starts editing a selected node or creates a sibling while editing, plain `Tab` creates a child, `Shift + Enter` inserts a line break, and arrow keys navigate between nodes outside editing.
+Press `Space` on a selected node to enter editing. While editing, `Space` inserts a normal text space and `Enter` inserts a new line; press `Escape` or click outside the node to finish. Outside editing, plain `Enter` creates a sibling, plain `Tab` creates a child, and arrow keys navigate between nodes.
 
 Cammvas does not assign default hotkeys to **Add child node**, **Add sibling node**, or **Create root node**. All commands remain available from the command palette and can be assigned custom hotkeys under **Settings > Hotkeys**.
 
