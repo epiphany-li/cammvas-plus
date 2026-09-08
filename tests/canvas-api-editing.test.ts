@@ -17,13 +17,19 @@ function editingFixture() {
 		y: 0,
 		width: 100,
 		height: 60,
-		nodeEl: { isConnected: true },
+		nodeEl: {
+			isConnected: true,
+			getBoundingClientRect: () => ({ top: 20, right: 120, bottom: 80, left: 20 }),
+		},
 		startEditing: vi.fn(),
 	} as unknown as CanvasNode;
 	const canvas = {
 		nodes: new Map([[node.id, node]]),
 		selection: new Set<CanvasNode>(),
-		wrapperEl: { win: { setTimeout } },
+		wrapperEl: {
+			win: { setTimeout },
+			getBoundingClientRect: () => ({ top: 0, right: 800, bottom: 600, left: 0 }),
+		},
 		selectOnly: vi.fn((selected: CanvasNode) => {
 			canvas.selection.clear();
 			canvas.selection.add(selected);
@@ -58,6 +64,7 @@ describe("CanvasAPI.selectAndEdit", () => {
 		api.selectAndEdit(canvas, node);
 		vi.advanceTimersByTime(50);
 		expect(node.startEditing).toHaveBeenCalledOnce();
+		expect(canvas.zoomToSelection).not.toHaveBeenCalled();
 	});
 
 	it("does not reopen a node after the user switches away", () => {

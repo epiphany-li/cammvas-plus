@@ -10,3 +10,19 @@ export function isDomNode(value: unknown): value is Node {
 		&& value !== null
 		&& typeof Reflect.get(value, "nodeType") === "number";
 }
+
+const INTERACTIVE_CONTROL_SELECTOR = [
+	"button",
+	"input",
+	"textarea",
+	"select",
+	"a[href]",
+	"[role='button']",
+	"[contenteditable='true']",
+	".clickable-icon",
+].join(", ");
+
+/** Keep Canvas navigation/edit shortcuts away from focused UI controls. */
+export function isInteractiveControlTarget(value: unknown): boolean {
+	return isHtmlElement(value) && Boolean(value.closest(INTERACTIVE_CONTROL_SELECTOR));
+}

@@ -68,10 +68,12 @@ export function shouldExitEditingOnEscape(
 export function shouldCreateChildOnTab(
 	event: EditingEnterEvent,
 	enabled: boolean,
-	hasSelectedNode: boolean
+	hasSelectedNode: boolean,
+	isEditing: boolean
 ): boolean {
 	return enabled
 		&& hasSelectedNode
+		&& !isEditing
 		&& event.key === "Tab"
 		&& !event.shiftKey
 		&& !event.ctrlKey

@@ -17,6 +17,8 @@ The Plus branch includes interaction and maintenance improvements:
   content, and reflows every affected branch without moving the viewport.
 - Deferred editor, outline, and drag callbacks are cancelled when their original interaction
   is no longer current.
+- Leaving an editor with a background click cannot spill into Canvas's double-click card
+  creation, and selecting an already visible editing target does not recenter the viewport.
 
 Build and install the generated `main.js`, `manifest.json`, and `styles.css` into the vault's
 `.obsidian/plugins/cammvas-plus/` directory. Do not edit the generated bundle by hand.
@@ -29,7 +31,7 @@ Cammvas adds the interactions people expect from standalone mind-mapping softwar
 
 ## What Cammvas Adds
 
-- **Mind-map keyboard workflow:** outside editing, `Space` edits the selected node, `Enter` creates a sibling, `Tab` creates a child, and arrow keys navigate the tree; while editing, `Enter` and `Space` behave as normal text input, and `Escape` or an outside click exits editing.
+- **Mind-map keyboard workflow:** outside editing, `Space` edits the selected node, `Enter` creates a sibling, `Tab` creates a child, and arrow keys navigate the tree; while editing, `Enter`, `Tab`, and `Space` stay with the text editor, and `Escape` or an outside click exits editing.
 - **Drag to create branches:** drop one or multiple selected nodes onto another node to reparent their complete branches, with cycle prevention and a highlighted target.
 - **Collapsible branches:** fold and restore complete descendant trees directly from their parent nodes.
 - **Automatic tree layout:** compact contour-based placement with left, right, and balanced branches.
@@ -53,7 +55,7 @@ All behavior can be configured under **Settings > Cammvas Plus**.
 
 ## Keyboard Workflow
 
-Press `Space` on a selected node to enter editing. While editing, `Space` inserts a normal text space and `Enter` inserts a new line; press `Escape` or click outside the node to finish. Outside editing, plain `Enter` creates a sibling, plain `Tab` creates a child, and arrow keys navigate between nodes.
+Press `Space` on a selected node to enter editing. While editing, `Space` inserts a normal text space, `Enter` inserts a new line, and `Tab` remains available to the text editor; press `Escape` or click outside the node to finish. An editing-exit double-click on empty space is treated only as leaving the editor, so it does not also create a card. Outside editing, plain `Enter` creates a sibling, plain `Tab` creates a child, and arrow keys navigate between nodes. Moving editing focus to a node already on screen preserves the current viewport.
 
 Cammvas does not assign default hotkeys to **Add child node**, **Add sibling node**, or **Create root node**. All commands remain available from the command palette and can be assigned custom hotkeys under **Settings > Hotkeys**.
 

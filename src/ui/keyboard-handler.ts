@@ -23,7 +23,7 @@ import {
 } from "./editing-enter";
 import { isNodeEditorFocused, shouldUseNodeArrowNavigation } from "./editing-state";
 import { pluginCommandId } from "./plugin-command";
-import { isDomNode } from "./dom";
+import { isDomNode, isInteractiveControlTarget } from "./dom";
 import { focusCanvasKeyboardTarget } from "./canvas-keyboard-focus";
 
 /**
@@ -376,6 +376,7 @@ export class KeyboardHandler {
 	handleEnter(canvas: Canvas, event: KeyboardEvent): boolean {
 		const node = this.canvasApi.getSelectedNode(canvas);
 		if (!node || !this.isMindmapEnabled(canvas)) return false;
+		if (isInteractiveControlTarget(event.target)) return false;
 		if (!shouldCreateSiblingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) return false;
 
 		const executeCommand = this.getCommandExecutor();
@@ -389,7 +390,8 @@ export class KeyboardHandler {
 	handleChildTab(canvas: Canvas, event: KeyboardEvent): boolean {
 		const node = this.canvasApi.getSelectedNode(canvas);
 		if (!node || !this.isMindmapEnabled(canvas)) return false;
-		if (!shouldCreateChildOnTab(event, this.enterCreatesSiblingEnabled(), true)) return false;
+		if (isInteractiveControlTarget(event.target)) return false;
+		if (!shouldCreateChildOnTab(event, this.enterCreatesSiblingEnabled(), true, node.isEditing)) return false;
 
 		const executeCommand = this.getCommandExecutor();
 		if (!executeCommand) return false;
@@ -412,6 +414,7 @@ export class KeyboardHandler {
 		for (const [key, commandId] of commandIds) {
 			this.registerCanvasKeyOverride(canvas, key, (event) => {
 				const node = this.canvasApi.getSelectedNode(canvas);
+				if (isInteractiveControlTarget(event.target)) return false;
 				if (!shouldUseNodeArrowNavigation(
 					this.arrowKeyNavigationEnabled(),
 					this.isMindmapEnabled(canvas),
@@ -471,6 +474,7 @@ export class KeyboardHandler {
 		if (this.canvasApi.getActiveCanvas() !== canvas) return false;
 		const node = this.canvasApi.getSelectedNode(canvas);
 		if (!node || !this.isMindmapEnabled(canvas)) return false;
+		if (!node.isEditing && isInteractiveControlTarget(event.target)) return false;
 
 		if (shouldStartEditingOnSpace(event, node.isEditing)) {
 			event.preventDefault();

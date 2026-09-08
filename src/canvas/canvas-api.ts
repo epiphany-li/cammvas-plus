@@ -292,7 +292,10 @@ export class CanvasAPI {
 		zoomPadding: number = 0,
 		immediate: boolean = false
 	): void {
-		this.selectAndZoom(canvas, node, zoomPadding);
+		// Editing should change the keyboard target, not unexpectedly redefine the
+		// visual center. Keep the current viewport whenever the node is already
+		// visible and only move it far enough to reveal an off-screen target.
+		this.selectAndReveal(canvas, node, zoomPadding);
 		if (immediate) {
 			node.startEditing();
 			return;

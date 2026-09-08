@@ -84,13 +84,17 @@ describe("shouldExitEditingOnEscape", () => {
 });
 
 describe("shouldCreateChildOnTab", () => {
-	it("handles plain Tab when the mode is enabled and a node is selected", () => {
-		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab" }), true, true)).toBe(true);
+	it("handles plain Tab outside editing when the mode is enabled and a node is selected", () => {
+		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab" }), true, true, false)).toBe(true);
+	});
+
+	it("leaves Tab available to the text editor while editing", () => {
+		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab" }), true, true, true)).toBe(false);
 	});
 
 	it("leaves modified Tab and disabled mode unchanged", () => {
-		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab", shiftKey: true }), true, true)).toBe(false);
-		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab" }), false, true)).toBe(false);
-		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab" }), true, false)).toBe(false);
+		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab", shiftKey: true }), true, true, false)).toBe(false);
+		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab" }), false, true, false)).toBe(false);
+		expect(shouldCreateChildOnTab(enterEvent({ key: "Tab" }), true, false, false)).toBe(false);
 	});
 });

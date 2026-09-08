@@ -66,4 +66,4 @@ All commands are available from the command palette (`Ctrl/Cmd+P`). Search for "
 Cammvas includes a physical-key fallback for non-Latin keyboard layouts. See [Working with RTL content](/broken/pages/T0FxqT2PDsBShPB5TUm4).
 {% endhint %}
 
-Press `Space` on a selected node to edit it. While editing, `Space` inserts a space and `Enter` inserts a new line normally; `Escape` or clicking outside finishes editing. Outside editing, plain `Enter` creates a sibling and `Tab` creates a child when **Mind mapping Enter and Tab** is enabled. Double-click empty Canvas space to create a root. Node creation commands can also be customized under **Settings > Hotkeys**.
+Press `Space` on a selected node to edit it. While editing, `Space`, `Enter`, and `Tab` remain text-editor inputs; `Escape` or clicking outside finishes editing. A background double-click that begins while editing only exits the editor and does not also create a card. Outside editing, plain `Enter` creates a sibling and `Tab` creates a child when **Mind mapping Enter and Tab** is enabled. Double-click empty Canvas space to create a root. Node creation commands can also be customized under **Settings > Hotkeys**.

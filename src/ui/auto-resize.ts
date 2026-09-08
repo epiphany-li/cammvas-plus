@@ -5,6 +5,28 @@ interface AutoResizeConfig {
 	minHeight: number;
 }
 
+const EDIT_EXIT_DOUBLE_CLICK_GUARD_MS = 500;
+const CANVAS_INTERACTIVE_SELECTOR = [
+	".canvas-node",
+	".canvas-node-connection-point",
+	".canvas-controls",
+	".canvas-menu",
+	".canvas-card-menu",
+	"button",
+	"input",
+	"textarea",
+	"select",
+	"a",
+	"[contenteditable='true']",
+].join(", ");
+
+/** True only for an empty Canvas surface, never for cards or controls. */
+export function isCanvasBackgroundTarget(wrapperEl: HTMLElement, target: unknown): boolean {
+	return isHtmlElement(target)
+		&& wrapperEl.contains(target)
+		&& !target.closest(CANVAS_INTERACTIVE_SELECTOR);
+}
+
 /**
  * Get CodeMirror editor elements from a canvas node's iframe.
  * Used to measure content height via .cm-content.offsetHeight.
@@ -59,7 +81,21 @@ export function registerAutoResize(
 	let cachedInputTarget: Document | HTMLElement | null = null;
 	// Invalidates delayed focus/pointer callbacks when editing switches nodes.
 	let watchGeneration = 0;
+	let suppressBackgroundDoubleClick = false;
+	let doubleClickGuardTimer: number | null = null;
 	const win = canvas.wrapperEl.win;
+
+	function clearDoubleClickGuard(): void {
+		if (doubleClickGuardTimer !== null) win.clearTimeout(doubleClickGuardTimer);
+		doubleClickGuardTimer = null;
+		suppressBackgroundDoubleClick = false;
+	}
+
+	function armDoubleClickGuard(): void {
+		clearDoubleClickGuard();
+		suppressBackgroundDoubleClick = true;
+		doubleClickGuardTimer = win.setTimeout(clearDoubleClickGuard, EDIT_EXIT_DOUBLE_CLICK_GUARD_MS);
+	}
 
 	function onContentChange(): void {
 		if (!activeNode || !cachedScroller || !cachedCmContent) return;
@@ -199,6 +235,17 @@ export function registerAutoResize(
 		if (!activeNode) return;
 		// Ignore clicks inside the editing node
 		if (isDomNode(e.target) && activeNode.nodeEl?.contains(e.target)) return;
+		// A quick double-click used to leave editing must not continue into
+		// Obsidian's native "double-click empty space to create a card" action.
+		if (
+			e.button === 0
+			&& e.isPrimary !== false
+			&& !e.ctrlKey
+			&& !e.altKey
+			&& !e.metaKey
+			&& !e.shiftKey
+			&& isCanvasBackgroundTarget(canvas.wrapperEl, e.target)
+		) armDoubleClickGuard();
 		const node = activeNode;
 		const generation = watchGeneration;
 		win.setTimeout(() => {
@@ -208,16 +255,26 @@ export function registerAutoResize(
 		}, 50);
 	};
 
+	const doubleClickHandler = (e: MouseEvent): void => {
+		if (!suppressBackgroundDoubleClick || !isCanvasBackgroundTarget(canvas.wrapperEl, e.target)) return;
+		clearDoubleClickGuard();
+		e.preventDefault();
+		e.stopImmediatePropagation();
+	};
+
 	canvas.wrapperEl?.addEventListener("focusin", focusInHandler);
 	canvas.wrapperEl?.addEventListener("focusout", focusOutHandler);
-	canvas.wrapperEl?.addEventListener("pointerdown", pointerHandler);
+	canvas.wrapperEl?.addEventListener("pointerdown", pointerHandler, true);
+	canvas.wrapperEl?.addEventListener("dblclick", doubleClickHandler, true);
 
 	return {
 		cleanup: () => {
+			clearDoubleClickGuard();
 			if (activeNode) stopWatching(false);
 			canvas.wrapperEl?.removeEventListener("focusin", focusInHandler);
 			canvas.wrapperEl?.removeEventListener("focusout", focusOutHandler);
-			canvas.wrapperEl?.removeEventListener("pointerdown", pointerHandler);
+			canvas.wrapperEl?.removeEventListener("pointerdown", pointerHandler, true);
+			canvas.wrapperEl?.removeEventListener("dblclick", doubleClickHandler, true);
 		},
 		finalizeNode: () => {
 			if (activeNode) stopWatching(false);

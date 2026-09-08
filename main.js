@@ -4279,6 +4279,19 @@ function isHtmlElement(value) {
 function isDomNode(value) {
   return typeof value === "object" && value !== null && typeof Reflect.get(value, "nodeType") === "number";
 }
+var INTERACTIVE_CONTROL_SELECTOR = [
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "a[href]",
+  "[role='button']",
+  "[contenteditable='true']",
+  ".clickable-icon"
+].join(", ");
+function isInteractiveControlTarget(value) {
+  return isHtmlElement(value) && Boolean(value.closest(INTERACTIVE_CONTROL_SELECTOR));
+}
 
 // src/ui/spatial-navigation.ts
 function isRectFullyVisible(rect, viewport) {
@@ -4531,7 +4544,7 @@ var CanvasAPI = class {
     }
   }
   selectAndEdit(canvas, node, zoomPadding = 0, immediate = false) {
-    this.selectAndZoom(canvas, node, zoomPadding);
+    this.selectAndReveal(canvas, node, zoomPadding);
     if (immediate) {
       node.startEditing();
       return;
@@ -5678,8 +5691,8 @@ function shouldStartEditingOnSpace(event, isEditing) {
 function shouldExitEditingOnEscape(event, isEditing) {
   return isEditing && event.key === "Escape" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
 }
-function shouldCreateChildOnTab(event, enabled, hasSelectedNode) {
-  return enabled && hasSelectedNode && event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
+function shouldCreateChildOnTab(event, enabled, hasSelectedNode, isEditing) {
+  return enabled && hasSelectedNode && !isEditing && event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing;
 }
 
 // src/ui/editing-state.ts
@@ -5996,6 +6009,7 @@ var KeyboardHandler = class {
   handleEnter(canvas, event) {
     const node = this.canvasApi.getSelectedNode(canvas);
     if (!node || !this.isMindmapEnabled(canvas)) return false;
+    if (isInteractiveControlTarget(event.target)) return false;
     if (!shouldCreateSiblingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) return false;
     const executeCommand = this.getCommandExecutor();
     if (!executeCommand) return false;
@@ -6007,7 +6021,8 @@ var KeyboardHandler = class {
   handleChildTab(canvas, event) {
     const node = this.canvasApi.getSelectedNode(canvas);
     if (!node || !this.isMindmapEnabled(canvas)) return false;
-    if (!shouldCreateChildOnTab(event, this.enterCreatesSiblingEnabled(), true)) return false;
+    if (isInteractiveControlTarget(event.target)) return false;
+    if (!shouldCreateChildOnTab(event, this.enterCreatesSiblingEnabled(), true, node.isEditing)) return false;
     const executeCommand = this.getCommandExecutor();
     if (!executeCommand) return false;
     if (!executeCommand(this.commandId("mindmap-add-child"))) return false;
@@ -6028,6 +6043,7 @@ var KeyboardHandler = class {
       this.registerCanvasKeyOverride(canvas, key, (event) => {
         var _a;
         const node = this.canvasApi.getSelectedNode(canvas);
+        if (isInteractiveControlTarget(event.target)) return false;
         if (!shouldUseNodeArrowNavigation(
           this.arrowKeyNavigationEnabled(),
           this.isMindmapEnabled(canvas),
@@ -6078,6 +6094,7 @@ var KeyboardHandler = class {
     if (this.canvasApi.getActiveCanvas() !== canvas) return false;
     const node = this.canvasApi.getSelectedNode(canvas);
     if (!node || !this.isMindmapEnabled(canvas)) return false;
+    if (!node.isEditing && isInteractiveControlTarget(event.target)) return false;
     if (shouldStartEditingOnSpace(event, node.isEditing)) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -6523,7 +6540,7 @@ var MindMapSettingTab = class extends import_obsidian4.PluginSettingTab {
       { name: "Drag to reparent", desc: import_obsidian4.Platform.isMobile ? "Long-press and drag a node onto another node to make it a child while preserving its branch" : "Drop a node onto another node to make it a child while preserving its branch", control: { type: "toggle", key: "dragToReparent" } },
       { name: "Auto-layout after reparent", desc: "Automatically arrange the subtree after dragging a node onto a new parent", control: { type: "toggle", key: "autoLayoutOnReparent" } },
       { name: "Auto-layout on manual edits", desc: "Also re-arrange the subtree after editing text, deleting, detaching, or manually moving a node \u2014 not just when Cammvas creates nodes", control: { type: "toggle", key: "autoLayoutOnEdit" } },
-      { name: "Mind mapping Enter and Tab", desc: import_obsidian4.Platform.isMobile ? "Use Enter and Tab from a hardware keyboard to create sibling and child nodes outside editing" : "Outside editing, Enter creates a sibling and Tab creates a child; inside editing, Enter inserts a new line", control: { type: "toggle", key: "enterCreatesSibling" } },
+      { name: "Mind mapping Enter and Tab", desc: import_obsidian4.Platform.isMobile ? "Use Enter and Tab from a hardware keyboard to create sibling and child nodes outside editing" : "Outside editing, Enter creates a sibling and Tab creates a child; inside editing, both keys remain with the text editor", control: { type: "toggle", key: "enterCreatesSibling" } },
       { name: "Horizontal gap", desc: "Space between parent and child nodes (px)", control: positiveNumber("horizontalGap") },
       { name: "Vertical gap", desc: "Space between sibling nodes (px)", control: positiveNumber("verticalGap") },
       { name: "Default node width", desc: "Width of newly created nodes (px)", control: positiveNumber("defaultNodeWidth") },
@@ -22776,6 +22793,23 @@ var PdfExportModal = class extends import_obsidian6.Modal {
 };
 
 // src/ui/auto-resize.ts
+var EDIT_EXIT_DOUBLE_CLICK_GUARD_MS = 500;
+var CANVAS_INTERACTIVE_SELECTOR = [
+  ".canvas-node",
+  ".canvas-node-connection-point",
+  ".canvas-controls",
+  ".canvas-menu",
+  ".canvas-card-menu",
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "a",
+  "[contenteditable='true']"
+].join(", ");
+function isCanvasBackgroundTarget(wrapperEl, target) {
+  return isHtmlElement(target) && wrapperEl.contains(target) && !target.closest(CANVAS_INTERACTIVE_SELECTOR);
+}
 function getEditorElements(node) {
   var _a, _b;
   const iframe = (_a = node.contentEl) == null ? void 0 : _a.querySelector("iframe");
@@ -22786,7 +22820,7 @@ function getEditorElements(node) {
   return { iframe, scroller, cmContent };
 }
 function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKeydown) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   let activeNode = null;
   let observer = null;
   let inputHandler = null;
@@ -22795,7 +22829,19 @@ function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKe
   let cachedScroller = null;
   let cachedInputTarget = null;
   let watchGeneration = 0;
+  let suppressBackgroundDoubleClick = false;
+  let doubleClickGuardTimer = null;
   const win = canvas.wrapperEl.win;
+  function clearDoubleClickGuard() {
+    if (doubleClickGuardTimer !== null) win.clearTimeout(doubleClickGuardTimer);
+    doubleClickGuardTimer = null;
+    suppressBackgroundDoubleClick = false;
+  }
+  function armDoubleClickGuard() {
+    clearDoubleClickGuard();
+    suppressBackgroundDoubleClick = true;
+    doubleClickGuardTimer = win.setTimeout(clearDoubleClickGuard, EDIT_EXIT_DOUBLE_CLICK_GUARD_MS);
+  }
   function onContentChange() {
     if (!activeNode || !cachedScroller || !cachedCmContent) return;
     const contentH = Math.max(
@@ -22912,6 +22958,7 @@ function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKe
     var _a2;
     if (!activeNode) return;
     if (isDomNode(e.target) && ((_a2 = activeNode.nodeEl) == null ? void 0 : _a2.contains(e.target))) return;
+    if (e.button === 0 && e.isPrimary !== false && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && isCanvasBackgroundTarget(canvas.wrapperEl, e.target)) armDoubleClickGuard();
     const node = activeNode;
     const generation = watchGeneration;
     win.setTimeout(() => {
@@ -22920,16 +22967,25 @@ function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKe
       }
     }, 50);
   };
+  const doubleClickHandler = (e) => {
+    if (!suppressBackgroundDoubleClick || !isCanvasBackgroundTarget(canvas.wrapperEl, e.target)) return;
+    clearDoubleClickGuard();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  };
   (_a = canvas.wrapperEl) == null ? void 0 : _a.addEventListener("focusin", focusInHandler);
   (_b = canvas.wrapperEl) == null ? void 0 : _b.addEventListener("focusout", focusOutHandler);
-  (_c = canvas.wrapperEl) == null ? void 0 : _c.addEventListener("pointerdown", pointerHandler);
+  (_c = canvas.wrapperEl) == null ? void 0 : _c.addEventListener("pointerdown", pointerHandler, true);
+  (_d = canvas.wrapperEl) == null ? void 0 : _d.addEventListener("dblclick", doubleClickHandler, true);
   return {
     cleanup: () => {
-      var _a2, _b2, _c2;
+      var _a2, _b2, _c2, _d2;
+      clearDoubleClickGuard();
       if (activeNode) stopWatching(false);
       (_a2 = canvas.wrapperEl) == null ? void 0 : _a2.removeEventListener("focusin", focusInHandler);
       (_b2 = canvas.wrapperEl) == null ? void 0 : _b2.removeEventListener("focusout", focusOutHandler);
-      (_c2 = canvas.wrapperEl) == null ? void 0 : _c2.removeEventListener("pointerdown", pointerHandler);
+      (_c2 = canvas.wrapperEl) == null ? void 0 : _c2.removeEventListener("pointerdown", pointerHandler, true);
+      (_d2 = canvas.wrapperEl) == null ? void 0 : _d2.removeEventListener("dblclick", doubleClickHandler, true);
     },
     finalizeNode: () => {
       if (activeNode) stopWatching(false);
