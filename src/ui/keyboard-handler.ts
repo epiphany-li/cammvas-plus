@@ -32,6 +32,8 @@ import { focusCanvasKeyboardTarget } from "./canvas-keyboard-focus";
 export class KeyboardHandler {
 	/** Called before actions that leave the current node, to finalize auto-resize. */
 	onBeforeLeaveNode: (() => void) | null = null;
+	/** Identifies summary content nodes, which have no parent to add siblings to. */
+	isSummaryNode: ((canvas: Canvas, node: CanvasNode) => boolean) | null = null;
 	/** Padding (px) added around target node when zooming after navigation. */
 	zoomPadding: number = 0;
 	private arrowKeySelectionOnly = false;
@@ -378,6 +380,13 @@ export class KeyboardHandler {
 		if (!node || !this.isMindmapEnabled(canvas)) return false;
 		if (isInteractiveControlTarget(event.target)) return false;
 		if (!shouldCreateSiblingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) return false;
+		// A summary has no siblings: Enter edits it instead of spawning a new root.
+		if (this.isSummaryNode?.(canvas, node)) {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			node.startEditing();
+			return true;
+		}
 
 		const executeCommand = this.getCommandExecutor();
 		if (!executeCommand) return false;

@@ -5,6 +5,7 @@ declare module "obsidian" {
 	interface Workspace {
 		on(name: "canvas:menu", callback: (menu: Menu, canvas: Canvas) => void): EventRef;
 		on(name: "canvas:node-menu", callback: (menu: Menu, node: CanvasNode) => void): EventRef;
+		on(name: "canvas:selection-menu", callback: (menu: Menu, canvas: Canvas) => void): EventRef;
 	}
 	interface WorkspaceTabs {
 		children: WorkspaceLeaf[];
@@ -109,9 +110,15 @@ export interface Canvas {
 	ty: number;
 	tZoom: number;
 
+	/**
+	 * Extra top-level file keys (e.g. `mindmapCollapsed`) merged into getData().
+	 * Writing here persists them on the next save without rebuilding the canvas
+	 * the way setData() does.
+	 */
+	data?: Record<string, unknown>;
 	getData(): CanvasFileData;
 	setData(data: CanvasFileData): void;
-	importData(data: CanvasFileData): void;
+	importData(data: CanvasFileData, clear?: boolean): void;
 	requestSave(): void;
 	requestFrame(): void;
 
@@ -155,6 +162,7 @@ export interface CanvasFileData {
 	edges: CanvasEdgeFileData[];
 	mindmap?: boolean;
 	mindmapCollapsed?: string[];
+	[key: string]: unknown;
 }
 
 export interface CanvasDragHandler {

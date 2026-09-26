@@ -31,6 +31,12 @@ import { registerMobileEditingBar, MobileEditingBarHandle } from "./ui/mobile-ed
 import { computeOrderedListRenumberChanges } from "./ui/ordered-list-renumber";
 import { freemindToCanvas } from "./import/freemind-import";
 import { getGroupIds, buildForest, findTreeForNode } from "./mindmap/tree-model";
+import {
+	registerSummaries,
+	SummaryHandle,
+	getSummaryBracketIds,
+	getSummaryRecords,
+} from "./summary/summary-controller";
 
 export default class CanvasMindMapPlugin extends Plugin {
 	settings: MindMapSettings = DEFAULT_SETTINGS;
@@ -51,6 +57,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 	private cleanupNodeResizeHandler: (() => void) | null = null;
 	private autoResizeHandle: AutoResizeHandle | null = null;
 	private branchCollapseHandle: BranchCollapseHandle | null = null;
+	private summaryHandle: SummaryHandle | null = null;
 	private interceptedCanvas: Canvas | null = null;
 	private toggleBtnEl: HTMLElement | null = null;
 	private dragReparentBtnEl: HTMLElement | null = null;
@@ -128,7 +135,54 @@ export default class CanvasMindMapPlugin extends Plugin {
 			(canvas: Canvas) => this.updateGroupBounds(canvas)
 		);
 		this.keyboardHandler.zoomPadding = this.settings.navigationZoomPadding;
+		this.keyboardHandler.isSummaryNode = (canvas, node) =>
+			getSummaryRecords(canvas).some((record) => record.summaryNodeId === node.id);
 		this.keyboardHandler.register();
+
+		// Summaries follow their members after every layout pass.
+		this.layoutEngine.afterApply = (canvas) => {
+			if (canvas === this.interceptedCanvas) this.summaryHandle?.syncNow();
+		};
+
+		this.addCommand({
+			id: "mindmap-create-summary",
+			name: "Create summary from selected siblings",
+			checkCallback: (checking: boolean) => {
+				const canvas = this.canvasApi.getActiveCanvas();
+				if (!canvas || !this.summaryHandle || canvas !== this.interceptedCanvas) return false;
+				const selected = this.getSelectedNodeIds(canvas);
+				if (selected.length < 2) return false;
+				if (checking) return true;
+				this.summaryHandle.create(selected);
+			},
+		});
+
+		this.addCommand({
+			id: "mindmap-remove-summary",
+			name: "Remove summary bracket (keep content node)",
+			checkCallback: (checking: boolean) => {
+				const canvas = this.canvasApi.getActiveCanvas();
+				if (!canvas || !this.summaryHandle || canvas !== this.interceptedCanvas) return false;
+				const node = this.canvasApi.getSelectedNode(canvas);
+				const record = node ? this.summaryHandle.findByContentNode(node.id) : null;
+				if (!record) return false;
+				if (checking) return true;
+				this.summaryHandle.removeBracket(record.id);
+			},
+		});
+
+		this.addCommand({
+			id: "mindmap-toggle-branch",
+			name: "Toggle selected branch",
+			checkCallback: (checking: boolean) => {
+				const canvas = this.canvasApi.getActiveCanvas();
+				if (!canvas || !this.branchCollapseHandle || canvas !== this.interceptedCanvas) return false;
+				const node = this.canvasApi.getSelectedNode(canvas);
+				if (!node || !this.branchCollapseHandle.canToggle(node.id)) return false;
+				if (checking) return true;
+				this.branchCollapseHandle.toggle(node.id);
+			},
+		});
 
 		// Command: Re-layout entire mind map
 		this.addCommand({
@@ -184,6 +238,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				if (!selected) return false;
 
 				const groupIds = getGroupIds(canvas);
+				for (const bracketId of getSummaryBracketIds(canvas)) groupIds.delete(bracketId);
 				const cx = selected.x + selected.width / 2;
 				const cy = selected.y + selected.height / 2;
 				let targetGroupId: string | null = null;
@@ -360,6 +415,19 @@ export default class CanvasMindMapPlugin extends Plugin {
 			})
 		);
 
+		// Multi-selection context menu: turn consecutive siblings into a summary.
+		this.registerEvent(
+			this.app.workspace.on("canvas:selection-menu", (menu: Menu, canvas: Canvas) => {
+				if (!this.isMindmapCanvas(canvas) || canvas !== this.interceptedCanvas) return;
+				const selected = this.getSelectedNodeIds(canvas);
+				if (selected.length < 2) return;
+				menu.addItem((item) => item
+					.setTitle("创建概要")
+					.setIcon("brackets")
+					.onClick(() => this.summaryHandle?.create(selected)));
+			})
+		);
+
 		// Node referencing: "Copy node link" in canvas node context menu
 		this.registerEvent(
 			this.app.workspace.on("canvas:node-menu", (menu: Menu, node: CanvasNode) => {
@@ -390,6 +458,15 @@ export default class CanvasMindMapPlugin extends Plugin {
 						.setTitle("Zoom to branch")
 						.setIcon("scan")
 						.onClick(() => this.navigation.zoomToBranch(canvas, node)));
+				}
+				const summaryRecord = canvas === this.interceptedCanvas
+					? this.summaryHandle?.findByContentNode(node.id) ?? null
+					: null;
+				if (summaryRecord) {
+					menu.addItem((item) => item
+						.setTitle("移除概要括号（保留内容）")
+						.setIcon("brackets")
+						.onClick(() => this.summaryHandle?.removeBracket(summaryRecord.id)));
 				}
 				const groupIds = getGroupIds(canvas);
 				if (this.isMindmapCanvas(canvas) && !groupIds.has(node.id)) {
@@ -625,6 +702,10 @@ export default class CanvasMindMapPlugin extends Plugin {
 			this.branchCollapseHandle.cleanup();
 			this.branchCollapseHandle = null;
 		}
+		if (this.summaryHandle) {
+			this.summaryHandle.cleanup();
+			this.summaryHandle = null;
+		}
 		this.keyboardHandler.unregisterArrowKeyNavigation();
 		this.lastNavCanvas = null;
 		if (this.toggleBtnEl) {
@@ -727,6 +808,10 @@ export default class CanvasMindMapPlugin extends Plugin {
 			this.branchCollapseHandle.cleanup();
 			this.branchCollapseHandle = null;
 		}
+		if (this.summaryHandle) {
+			this.summaryHandle.cleanup();
+			this.summaryHandle = null;
+		}
 		this.keyboardHandler.unregisterArrowKeyNavigation();
 
 		const canvas = this.canvasApi.getActiveCanvas();
@@ -809,7 +894,9 @@ export default class CanvasMindMapPlugin extends Plugin {
 				if (this.settings.autoLayoutOnReparent) this.layoutEngine.layout(canvas);
 				this.updateGroupBounds(canvas);
 				this.branchCollapseHandle?.refresh();
-			}
+			},
+			12,
+			(node) => getSummaryRecords(canvas).some((record) => record.summaryNodeId === node.id)
 		);
 
 		// Snap a manually dragged node (and its subtree) back into its
@@ -861,7 +948,18 @@ export default class CanvasMindMapPlugin extends Plugin {
 			: registerGroupDragHandler(canvas, this.canvasApi);
 
 		// Add persistent collapse controls to nodes that have descendants.
-		this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi);
+		this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi, () => {
+			if (this.settings.autoLayout && this.isMindmapCanvas(canvas)) {
+				this.preserveViewport(canvas, () => {
+					this.layoutEngine.layout(canvas, new Set(canvas.nodes.keys()));
+				});
+				this.updateGroupBounds(canvas);
+			}
+			this.summaryHandle?.syncNow();
+		});
+
+		// XMind-style summaries: brackets and content nodes anchored to sibling ranges.
+		this.summaryHandle = registerSummaries(canvas, () => this.debouncedOutlineRefresh());
 
 		// Update group bounds after any drag operation (deferred to let positions settle)
 		const onDragEnd = () => this.trackedRaf(canvas.wrapperEl.win, () => this.updateGroupBounds(canvas));
@@ -1090,6 +1188,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 			}
 			origSave();
 			this.branchCollapseHandle?.refresh();
+			this.summaryHandle?.schedule();
 			this.debouncedOutlineRefresh();
 		};
 		canvas.createGroupNode = (options: CreateNodeOptions & { label?: string }) => {
@@ -1102,6 +1201,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				origUndo();
 				this.canvasApi.invalidateEdgeIndex();
 				this.branchCollapseHandle?.refresh();
+				this.summaryHandle?.schedule();
 				this.debouncedOutlineRefresh();
 			};
 		}
@@ -1110,6 +1210,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				origRedo();
 				this.canvasApi.invalidateEdgeIndex();
 				this.branchCollapseHandle?.refresh();
+				this.summaryHandle?.schedule();
 				this.debouncedOutlineRefresh();
 			};
 		}
@@ -1143,6 +1244,14 @@ export default class CanvasMindMapPlugin extends Plugin {
 		}
 	}
 
+	/** IDs of selected content nodes (groups excluded). */
+	private getSelectedNodeIds(canvas: Canvas): string[] {
+		const groupIds = getGroupIds(canvas);
+		return Array.from(canvas.selection)
+			.filter((item): item is CanvasNode => "nodeEl" in item && !groupIds.has(item.id))
+			.map((node) => node.id);
+	}
+
 	/**
 	 * Collect a node and all its descendants via BFS.
 	 */
@@ -1172,10 +1281,12 @@ export default class CanvasMindMapPlugin extends Plugin {
 		const PADDING = 20;
 		const groupIds = getGroupIds(canvas);
 		if (groupIds.size === 0) return;
+		const bracketIds = getSummaryBracketIds(canvas);
 
 		let changed = false;
 
 		for (const groupId of groupIds) {
+			if (bracketIds.has(groupId)) continue;
 			const group = canvas.nodes.get(groupId);
 			if (!group) continue;
 

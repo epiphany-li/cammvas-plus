@@ -9,6 +9,16 @@ import type {
 import { isHtmlElement } from "../ui/dom";
 import { isRectFullyVisible } from "../ui/spatial-navigation";
 
+/**
+ * Persist an extra top-level key of the canvas file (e.g. `mindmapCollapsed`).
+ * Unlike setData(), this does not re-import every node, so selection, editing
+ * state and rendered previews survive.
+ */
+export function writeCanvasDataKey(canvas: Canvas, key: string, value: unknown): void {
+	canvas.data = { ...(canvas.data ?? {}), [key]: value };
+	canvas.requestSave();
+}
+
 interface EdgeIndex {
 	/** Edges pointing TO a node (node is target) */
 	incoming: Map<string, CanvasEdge[]>;

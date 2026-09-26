@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, setIcon, Menu, Platform, SearchComponent } from "obsidian";
 import type { Canvas, CanvasNode, CanvasNodeFileData, CanvasView as CanvasViewType } from "../types/canvas-internal";
-import { buildForest, TreeNode, getDescendants, getGroupIds, getNodeTitle } from "../mindmap/tree-model";
+import { buildForest, TreeNode, getDescendants, getGroupIds, getNodeTitle, findTreeForNode } from "../mindmap/tree-model";
+import { getSummaryRecords } from "../summary/summary-controller";
 import { copyText } from "./clipboard";
 
 export const OUTLINE_VIEW_TYPE = "cammvas-plus-outline";
@@ -41,6 +42,8 @@ export class OutlineView extends ItemView {
 	private searchContainerEl: HTMLElement | null = null;
 	private searchComponent: SearchComponent | null = null;
 	private nodeDataById = new Map<string, CanvasNodeFileData>();
+	/** Summary content nodes, rendered under their parent instead of as roots. */
+	private summaryNodeIds = new Set<string>();
 	private renderGeneration = 0;
 	zoomPadding = 0;
 	onForestLayout: ((canvas: Canvas, groupId: string) => void) | null = null;
@@ -172,7 +175,7 @@ export class OutlineView extends ItemView {
 			this.searchComponent.setValue(this.searchQuery);
 		}
 
-		const forest = buildForest(canvas);
+		const forest = this.attachSummaries(canvas, buildForest(canvas));
 		if (forest.length === 0) {
 			this.contentEl.createDiv({
 				cls: "cammvas-outline-empty",
@@ -183,8 +186,9 @@ export class OutlineView extends ItemView {
 
 		// Collect canvas groups from serialized data (runtime nodes lack `type`)
 		const groups: GroupInfo[] = [];
+		const bracketIds = new Set(getSummaryRecords(canvas).map((record) => record.bracketNodeId));
 		for (const nd of canvas.getData().nodes) {
-			if (nd.type !== "group") continue;
+			if (nd.type !== "group" || bracketIds.has(nd.id)) continue;
 			const node = canvas.nodes.get(nd.id);
 			if (!node) continue;
 			groups.push({
@@ -441,8 +445,34 @@ export class OutlineView extends ItemView {
 		}
 	}
 
+	/**
+	 * Move summary trees from the root list to the end of their parent's
+	 * children, so the outline reads like XMind: members, then their summary.
+	 */
+	private attachSummaries(canvas: Canvas, forest: TreeNode[]): TreeNode[] {
+		this.summaryNodeIds.clear();
+		const records = getSummaryRecords(canvas);
+		if (records.length === 0) return forest;
+		const roots = new Map(forest.map((root) => [root.canvasNode.id, root]));
+		const attached = new Set<string>();
+		for (const record of records) {
+			const summaryRoot = roots.get(record.summaryNodeId);
+			if (!summaryRoot) continue;
+			const parent = findTreeForNode(forest, record.parentNodeId);
+			if (!parent || parent === summaryRoot) continue;
+			summaryRoot.parent = parent;
+			parent.children.push(summaryRoot);
+			attached.add(record.summaryNodeId);
+			this.summaryNodeIds.add(record.summaryNodeId);
+		}
+		return forest.filter((root) => !attached.has(root.canvasNode.id));
+	}
+
 	private renderChildItem(container: HTMLElement, node: TreeNode, canvas: Canvas): void {
-		const treeItem = container.createDiv({ cls: "tree-item cammvas-outline-node-tree" });
+		const isSummary = this.summaryNodeIds.has(node.canvasNode.id);
+		const treeItem = container.createDiv({
+			cls: `tree-item cammvas-outline-node-tree${isSummary ? " cammvas-outline-summary" : ""}`,
+		});
 		treeItem.dataset.nodeId = node.canvasNode.id;
 		const self = treeItem.createDiv({
 			cls: "tree-item-self is-clickable cammvas-outline-item",
@@ -457,10 +487,11 @@ export class OutlineView extends ItemView {
 			});
 		}
 
-		self.createDiv({
+		const inner = self.createDiv({
 			cls: "tree-item-inner",
 			text: getNodeTitle(node.canvasNode, this.nodeDataById.get(node.canvasNode.id)),
 		});
+		if (isSummary) inner.prepend(inner.createSpan({ cls: "cammvas-outline-summary-tag", text: "概要" }));
 		this.allItemEls.set(node.canvasNode.id, self);
 
 		self.addEventListener("click", () => this.navigateToNode(canvas, node.canvasNode));

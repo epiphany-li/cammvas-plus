@@ -16,7 +16,9 @@ export function registerDragReparent(
 	canvasApi: CanvasAPI,
 	isEnabled: () => boolean,
 	onReparent: (nodes: CanvasNode[], newParent: CanvasNode) => void,
-	touchHitPadding = 12
+	touchHitPadding = 12,
+	/** Nodes that must never be re-parented by dragging (e.g. summary content). */
+	isPinned: (node: CanvasNode) => boolean = () => false
 ): () => void {
 	const original = canvas.handleSelectionDrag;
 	if (!original) return () => {};
@@ -69,7 +71,7 @@ export function registerDragReparent(
 				return node ? canvasApi.getParentNode(canvas, node)?.id ?? null : null;
 			}
 		);
-		const draggedNodes = candidateNodes.filter((node) => topLevelIds.has(node.id));
+		const draggedNodes = candidateNodes.filter((node) => topLevelIds.has(node.id) && !isPinned(node));
 		let eligible = isEnabled()
 			&& draggedNodes.length > 0
 			&& (!directNode || !groupIds.has(directNode.id))

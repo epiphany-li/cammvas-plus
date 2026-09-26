@@ -48,6 +48,8 @@ interface SubtreeInfo {
  */
 export class LayoutEngine {
 	private config: LayoutConfig;
+	/** Runs after every layout pass, e.g. to re-anchor summaries to their members. */
+	afterApply: ((canvas: Canvas) => void) | null = null;
 
 	constructor(config?: Partial<LayoutConfig>) {
 		this.config = { ...DEFAULT_CONFIG, ...config };
@@ -575,6 +577,7 @@ export class LayoutEngine {
 			node.moveTo({ x: pos.x, y: pos.y });
 		}
 
+		this.afterApply?.(canvas);
 		canvas.requestSave();
 		canvas.requestFrame();
 

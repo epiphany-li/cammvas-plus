@@ -4267,7 +4267,7 @@ __export(main_exports, {
   default: () => CanvasMindMapPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // src/canvas/canvas-api.ts
 var import_obsidian = require("obsidian");
@@ -4319,6 +4319,11 @@ function findNearestNodeInDirection(origin, candidates, direction) {
 }
 
 // src/canvas/canvas-api.ts
+function writeCanvasDataKey(canvas, key, value) {
+  var _a;
+  canvas.data = { ...(_a = canvas.data) != null ? _a : {}, [key]: value };
+  canvas.requestSave();
+}
 function genId() {
   return Array.from(
     { length: 16 },
@@ -5062,6 +5067,8 @@ var DEFAULT_CONFIG = {
 };
 var LayoutEngine = class {
   constructor(config) {
+    /** Runs after every layout pass, e.g. to re-anchor summaries to their members. */
+    this.afterApply = null;
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
   /**
@@ -5438,7 +5445,7 @@ var LayoutEngine = class {
    * Apply calculated positions to canvas nodes.
    */
   applyPositions(canvas, positions, skipAnimationNodeIds = /* @__PURE__ */ new Set()) {
-    var _a, _b;
+    var _a, _b, _c;
     for (const [nodeId, pos] of positions) {
       const node = canvas.nodes.get(nodeId);
       if (!node) continue;
@@ -5449,6 +5456,7 @@ var LayoutEngine = class {
       }
       node.moveTo({ x: pos.x, y: pos.y });
     }
+    (_c = this.afterApply) == null ? void 0 : _c.call(this, canvas);
     canvas.requestSave();
     canvas.requestFrame();
     if (this.config.animate) {
@@ -5560,7 +5568,7 @@ var import_obsidian3 = require("obsidian");
 var import_obsidian2 = require("obsidian");
 var BUTTON_CLASS = "cammvas-canvas-collapse-button";
 var COLLAPSED_HIDDEN_CLASS = "cammvas-canvas-branch-hidden";
-function registerBranchCollapse(canvas, canvasApi) {
+function registerBranchCollapse(canvas, canvasApi, onToggled) {
   let disposed = false;
   let refreshRaf = null;
   let observer;
@@ -5574,15 +5582,12 @@ function registerBranchCollapse(canvas, canvasApi) {
   };
   const toggle = (nodeId) => {
     var _a;
-    const data = canvas.getData();
-    const collapsed = new Set((_a = data.mindmapCollapsed) != null ? _a : []);
+    const collapsed = new Set((_a = canvas.getData().mindmapCollapsed) != null ? _a : []);
     if (collapsed.has(nodeId)) collapsed.delete(nodeId);
     else collapsed.add(nodeId);
-    data.mindmapCollapsed = [...collapsed];
-    canvas.setData(data);
-    canvas.requestSave();
-    scheduleRefresh();
-    win.setTimeout(scheduleRefresh, 50);
+    writeCanvasDataKey(canvas, "mindmapCollapsed", [...collapsed]);
+    refresh();
+    onToggled == null ? void 0 : onToggled(nodeId);
   };
   const syncButton = (node, collapsed, descendantCount) => {
     let button = node.nodeEl.querySelector(`:scope > .${BUTTON_CLASS}`);
@@ -5664,6 +5669,8 @@ function registerBranchCollapse(canvas, canvasApi) {
   refresh();
   return {
     refresh: scheduleRefresh,
+    toggle,
+    canToggle: (nodeId) => canvasApi.getOutgoingEdges(canvas, nodeId).length > 0,
     cleanup: () => {
       var _a;
       disposed = true;
@@ -5741,6 +5748,8 @@ var KeyboardHandler = class {
     this.onNodesChanged = onNodesChanged;
     /** Called before actions that leave the current node, to finalize auto-resize. */
     this.onBeforeLeaveNode = null;
+    /** Identifies summary content nodes, which have no parent to add siblings to. */
+    this.isSummaryNode = null;
     /** Padding (px) added around target node when zooming after navigation. */
     this.zoomPadding = 0;
     this.arrowKeySelectionOnly = false;
@@ -6007,10 +6016,17 @@ var KeyboardHandler = class {
     this.canvasApi.selectAndEdit(canvas, newNode, this.zoomPadding, options.immediateEdit);
   }
   handleEnter(canvas, event) {
+    var _a;
     const node = this.canvasApi.getSelectedNode(canvas);
     if (!node || !this.isMindmapEnabled(canvas)) return false;
     if (isInteractiveControlTarget(event.target)) return false;
     if (!shouldCreateSiblingOnEnter(event, this.enterCreatesSiblingEnabled(), node.isEditing)) return false;
+    if ((_a = this.isSummaryNode) == null ? void 0 : _a.call(this, canvas, node)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      node.startEditing();
+      return true;
+    }
     const executeCommand = this.getCommandExecutor();
     if (!executeCommand) return false;
     if (!executeCommand(this.commandId("mindmap-add-sibling"))) return false;
@@ -6700,7 +6716,7 @@ function registerSubtreeDragHandler(canvas, canvasApi) {
 // src/canvas/drag-reparent.ts
 var import_obsidian5 = require("obsidian");
 var DROP_TARGET_CLASS = "cammvas-reparent-drop-target";
-function registerDragReparent(canvas, canvasApi, isEnabled, onReparent, touchHitPadding = 12) {
+function registerDragReparent(canvas, canvasApi, isEnabled, onReparent, touchHitPadding = 12, isPinned = () => false) {
   var _a, _b, _c;
   const original = canvas.handleSelectionDrag;
   if (!original) return () => {
@@ -6736,7 +6752,7 @@ function registerDragReparent(canvas, canvasApi, isEnabled, onReparent, touchHit
         return node ? (_b2 = (_a2 = canvasApi.getParentNode(canvas, node)) == null ? void 0 : _a2.id) != null ? _b2 : null : null;
       }
     );
-    const draggedNodes = candidateNodes.filter((node) => topLevelIds.has(node.id));
+    const draggedNodes = candidateNodes.filter((node) => topLevelIds.has(node.id) && !isPinned(node));
     let eligible = isEnabled() && draggedNodes.length > 0 && (!directNode || !groupIds.has(directNode.id)) && (!isTouchDrag || event.isPrimary);
     const handler = original.call(this, event, dragEl, directNode);
     if (!handler || !eligible) return handler;
@@ -18001,7 +18017,7 @@ var drawEllipsePath = function(config) {
   ];
 };
 var drawEllipseCurves = function(config) {
-  var centerX = asNumber(config.x);
+  var centerX2 = asNumber(config.x);
   var centerY = asNumber(config.y);
   var xScale = asNumber(config.xScale);
   var yScale = asNumber(config.yScale);
@@ -18014,7 +18030,7 @@ var drawEllipseCurves = function(config) {
   var xm = x + xScale;
   var ym = y + yScale;
   return [
-    translate(centerX, centerY),
+    translate(centerX2, centerY),
     rotateRadians(toRadians(config.rotate)),
     moveTo(x, ym),
     appendBezierCurve(x, ym - oy, xm - ox, y, xm, y),
@@ -23002,22 +23018,525 @@ function findNavigableHistoryIndex(history, startIndex, direction, nodeExists) {
 }
 
 // src/ui/outline-view.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
+
+// src/summary/summary-controller.ts
+var import_obsidian7 = require("obsidian");
+
+// src/summary/summary-model.ts
+var SUMMARY_DATA_KEY = "cammvasSummaries";
+var SUMMARY_DEFAULT_TEXT = "\u6982\u8981";
+var DEFAULT_SUMMARY_TEXTS = /* @__PURE__ */ new Set(["", SUMMARY_DEFAULT_TEXT, "Summary"]);
+var BRACKET_WIDTH = 24;
+var BRACKET_GAP = 24;
+var SUMMARY_GAP = 56;
+function readSummaryRecords(data) {
+  const raw = data[SUMMARY_DATA_KEY];
+  if (!Array.isArray(raw)) return [];
+  const records = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item;
+    if (typeof r.id !== "string" || typeof r.bracketNodeId !== "string" || typeof r.summaryNodeId !== "string" || typeof r.parentNodeId !== "string" || !Array.isArray(r.memberNodeIds)) continue;
+    records.push({
+      id: r.id,
+      version: 2,
+      bracketNodeId: r.bracketNodeId,
+      summaryNodeId: r.summaryNodeId,
+      memberNodeIds: r.memberNodeIds.filter((id) => typeof id === "string"),
+      parentNodeId: r.parentNodeId,
+      side: r.side === "left" ? "left" : "right",
+      offsetX: Number.isFinite(r.offsetX) ? r.offsetX : 0,
+      offsetY: Number.isFinite(r.offsetY) ? r.offsetY : 0
+    });
+  }
+  return records;
+}
+function getBracketIds(records) {
+  return new Set(records.map((record) => record.bracketNodeId));
+}
+function getSummaryNodeIds(records) {
+  return new Set(records.map((record) => record.summaryNodeId));
+}
+function childrenIndex(edges) {
+  var _a;
+  const index = /* @__PURE__ */ new Map();
+  for (const edge of edges) {
+    const list = (_a = index.get(edge.from)) != null ? _a : [];
+    list.push(edge.to);
+    index.set(edge.from, list);
+  }
+  return index;
+}
+function parentsIndex(edges) {
+  var _a;
+  const index = /* @__PURE__ */ new Map();
+  for (const edge of edges) {
+    const list = (_a = index.get(edge.to)) != null ? _a : [];
+    list.push(edge.from);
+    index.set(edge.to, list);
+  }
+  return index;
+}
+var centerX = (rect) => rect.x + rect.width / 2;
+function validateSummarySelection(graph, selectedIds, records) {
+  var _a;
+  const excluded = /* @__PURE__ */ new Set([...getBracketIds(records), ...getSummaryNodeIds(records)]);
+  const selected = [...new Set(selectedIds)].filter((id) => graph.nodes.has(id) && !excluded.has(id));
+  if (selected.length < 2) return { ok: false, error: "\u8BF7\u81F3\u5C11\u9009\u62E9\u4E24\u4E2A\u76F8\u90BB\u7684\u5144\u5F1F\u8282\u70B9" };
+  const parents = parentsIndex(graph.edges);
+  const parentIds = selected.map((id) => {
+    var _a2;
+    return (_a2 = parents.get(id)) != null ? _a2 : [];
+  });
+  if (parentIds.some((list) => list.length !== 1)) {
+    return { ok: false, error: "\u6BCF\u4E2A\u9009\u4E2D\u8282\u70B9\u90FD\u5FC5\u987B\u6070\u597D\u6709\u4E00\u4E2A\u7236\u8282\u70B9" };
+  }
+  const parentId = parentIds[0][0];
+  if (!parentIds.every((list) => list[0] === parentId)) {
+    return { ok: false, error: "\u9009\u4E2D\u8282\u70B9\u5FC5\u987B\u5C5E\u4E8E\u540C\u4E00\u4E2A\u7236\u8282\u70B9" };
+  }
+  const parent = graph.nodes.get(parentId);
+  if (!parent) return { ok: false, error: "\u627E\u4E0D\u5230\u5171\u540C\u7684\u7236\u8282\u70B9" };
+  const sideOf = (id) => centerX(graph.nodes.get(id)) >= centerX(parent) ? "right" : "left";
+  const side = sideOf(selected[0]);
+  if (!selected.every((id) => sideOf(id) === side)) {
+    return { ok: false, error: "\u9009\u4E2D\u8282\u70B9\u5FC5\u987B\u4F4D\u4E8E\u7236\u8282\u70B9\u7684\u540C\u4E00\u4FA7" };
+  }
+  const siblings = ((_a = childrenIndex(graph.edges).get(parentId)) != null ? _a : []).filter((id) => graph.nodes.has(id) && sideOf(id) === side).sort((a, b) => graph.nodes.get(a).y - graph.nodes.get(b).y);
+  const selectedSet = new Set(selected);
+  const indices = siblings.map((id, index) => selectedSet.has(id) ? index : -1).filter((index) => index >= 0);
+  if (indices.length !== selected.length || Math.max(...indices) - Math.min(...indices) + 1 !== indices.length) {
+    return { ok: false, error: "\u8BF7\u9009\u62E9\u8FDE\u7EED\u76F8\u90BB\u7684\u5144\u5F1F\u8282\u70B9" };
+  }
+  const used = new Set(records.flatMap((record) => record.memberNodeIds));
+  if (selected.some((id) => used.has(id))) {
+    return { ok: false, error: "\u6709\u8282\u70B9\u5DF2\u7ECF\u5C5E\u4E8E\u53E6\u4E00\u4E2A\u6982\u8981" };
+  }
+  return {
+    ok: true,
+    memberIds: siblings.filter((id) => selectedSet.has(id)),
+    parentId,
+    side
+  };
+}
+function collectCoveredIds(edges, rootIds, excludedIds = /* @__PURE__ */ new Set()) {
+  var _a;
+  const children = childrenIndex(edges);
+  const result = [];
+  const visited = /* @__PURE__ */ new Set();
+  const queue = [...rootIds];
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (visited.has(id) || excludedIds.has(id)) continue;
+    visited.add(id);
+    result.push(id);
+    queue.push(...(_a = children.get(id)) != null ? _a : []);
+  }
+  return result;
+}
+function computeSummaryGeometry(covered, side, summaryWidth, summaryHeight) {
+  const minX = Math.min(...covered.map((rect) => rect.x));
+  const maxX = Math.max(...covered.map((rect) => rect.x + rect.width));
+  const minY = Math.min(...covered.map((rect) => rect.y));
+  const maxY = Math.max(...covered.map((rect) => rect.y + rect.height));
+  const bracketHeight = Math.max(40, maxY - minY);
+  const bracketX = side === "right" ? maxX + BRACKET_GAP : minX - BRACKET_GAP - BRACKET_WIDTH;
+  const summaryX = side === "right" ? bracketX + BRACKET_WIDTH + SUMMARY_GAP : bracketX - SUMMARY_GAP - summaryWidth;
+  return {
+    bracketX,
+    bracketY: minY,
+    bracketHeight,
+    summaryX,
+    summaryY: minY + bracketHeight / 2 - summaryHeight / 2
+  };
+}
+function reconcileSummaryRecords(graph, records) {
+  var _a, _b;
+  const parents = parentsIndex(graph.edges);
+  const children = childrenIndex(graph.edges);
+  const kept = [];
+  const removals = [];
+  let changed = false;
+  for (const record of records) {
+    const members = record.memberNodeIds.filter(
+      (id) => {
+        var _a2;
+        return graph.nodes.has(id) && ((_a2 = parents.get(id)) != null ? _a2 : []).includes(record.parentNodeId);
+      }
+    );
+    const summaryNode = graph.nodes.get(record.summaryNodeId);
+    const bracketExists = graph.nodes.has(record.bracketNodeId);
+    if (!summaryNode || !bracketExists || members.length < 2) {
+      const untouched = summaryNode && DEFAULT_SUMMARY_TEXTS.has(((_a = summaryNode.text) != null ? _a : "").trim()) && ((_b = children.get(record.summaryNodeId)) != null ? _b : []).length === 0;
+      removals.push({
+        record,
+        removeBracket: bracketExists,
+        removeSummaryNode: Boolean(untouched)
+      });
+      changed = true;
+      continue;
+    }
+    if (members.length !== record.memberNodeIds.length) {
+      kept.push({ ...record, memberNodeIds: members });
+      changed = true;
+    } else {
+      kept.push(record);
+    }
+  }
+  return { records: kept, removals, changed };
+}
+
+// src/summary/summary-controller.ts
+var SUMMARY_BRACKET_CLASS = "cammvas-summary-bracket";
+var SUMMARY_CONTENT_CLASS = "cammvas-summary-content";
+var SUMMARY_HIDDEN_CLASS = "cammvas-summary-hidden";
+function getSummaryRecords(canvas) {
+  var _a;
+  return readSummaryRecords((_a = canvas.data) != null ? _a : {});
+}
+function getSummaryBracketIds(canvas) {
+  return new Set(getSummaryRecords(canvas).map((record) => record.bracketNodeId));
+}
+function makeId() {
+  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+}
+function registerSummaries(canvas, onLayoutNeeded) {
+  const win = canvas.wrapperEl.win;
+  let disposed = false;
+  let scheduled = null;
+  let syncing = false;
+  let drag = null;
+  const graph = () => ({
+    nodes: new Map(Array.from(canvas.nodes.values(), (node) => [node.id, node])),
+    edges: Array.from(canvas.edges.values(), (edge) => ({
+      from: edge.from.node.id,
+      to: edge.to.node.id
+    }))
+  });
+  const writeRecords = (records) => {
+    writeCanvasDataKey(canvas, SUMMARY_DATA_KEY, records);
+  };
+  const hiddenByCollapse = (edges) => {
+    var _a, _b;
+    const children = /* @__PURE__ */ new Map();
+    for (const edge of edges) {
+      const list = (_a = children.get(edge.from)) != null ? _a : [];
+      list.push(edge.to);
+      children.set(edge.from, list);
+    }
+    const collapsed = (_b = canvas.getData().mindmapCollapsed) != null ? _b : [];
+    return collectCollapsedDescendantIds(collapsed, (id) => {
+      var _a2;
+      return (_a2 = children.get(id)) != null ? _a2 : [];
+    });
+  };
+  const setEdgeHidden = (edge, hidden) => {
+    var _a, _b, _c, _d, _e;
+    for (const el of [
+      edge.lineGroupEl,
+      edge.lineEl,
+      edge.lineEndGroupEl,
+      edge.startGroupEl,
+      edge.endGroupEl,
+      (_a = edge.fromLineEnd) == null ? void 0 : _a.el,
+      (_b = edge.toLineEnd) == null ? void 0 : _b.el,
+      (_c = edge.labelElement) == null ? void 0 : _c.wrapperEl,
+      (_d = edge.path) == null ? void 0 : _d.display,
+      (_e = edge.path) == null ? void 0 : _e.interaction
+    ]) {
+      el == null ? void 0 : el.classList.toggle(SUMMARY_HIDDEN_CLASS, hidden);
+    }
+  };
+  const updateConnector = (bracket, summaryNode, side) => {
+    const startX = side === "left" ? bracket.x : bracket.x + bracket.width;
+    const startY = bracket.y + bracket.height / 2;
+    const endX = side === "left" ? summaryNode.x + summaryNode.width : summaryNode.x;
+    const endY = summaryNode.y + summaryNode.height / 2;
+    const dx = endX - startX;
+    const dy = endY - startY;
+    bracket.nodeEl.style.setProperty("--cammvas-summary-line-length", `${Math.hypot(dx, dy)}px`);
+    bracket.nodeEl.style.setProperty("--cammvas-summary-line-angle", `${Math.atan2(dy, dx)}rad`);
+  };
+  const syncNow = () => {
+    if (disposed || syncing) return;
+    syncing = true;
+    try {
+      sync();
+    } finally {
+      syncing = false;
+    }
+  };
+  const sync = () => {
+    var _a, _b;
+    let records = getSummaryRecords(canvas);
+    if (records.length === 0) return;
+    let g = graph();
+    const reconciled = reconcileSummaryRecords(g, records);
+    if (reconciled.changed) {
+      for (const removal of reconciled.removals) {
+        const bracket = removal.removeBracket ? canvas.nodes.get(removal.record.bracketNodeId) : null;
+        if (bracket) canvas.removeNode(bracket);
+        const content = removal.removeSummaryNode ? canvas.nodes.get(removal.record.summaryNodeId) : null;
+        if (content) canvas.removeNode(content);
+        else (_a = canvas.nodes.get(removal.record.summaryNodeId)) == null ? void 0 : _a.nodeEl.removeClass(SUMMARY_CONTENT_CLASS);
+      }
+      if (reconciled.removals.length > 0) {
+        new import_obsidian7.Notice(reconciled.removals.length === 1 ? "\u6982\u8981\u7684\u6210\u5458\u4E0D\u8DB3\u4E24\u4E2A\uFF0C\u5DF2\u89E3\u9664\u8BE5\u6982\u8981" : `\u5DF2\u89E3\u9664 ${reconciled.removals.length} \u4E2A\u5931\u6548\u7684\u6982\u8981`);
+      }
+      records = reconciled.records;
+      writeRecords(records);
+      g = graph();
+    }
+    const hidden = hiddenByCollapse(g.edges);
+    const contexts = records.map((record) => {
+      const covered = collectCoveredIds(
+        g.edges,
+        record.memberNodeIds,
+        /* @__PURE__ */ new Set([record.bracketNodeId, record.summaryNodeId])
+      );
+      return { record, covered, coveredSet: new Set(covered) };
+    });
+    const contains = (outer, inner) => outer !== inner && outer.coveredSet.has(inner.record.parentNodeId);
+    contexts.sort((a, b) => contains(a, b) ? 1 : contains(b, a) ? -1 : 0);
+    let moved = false;
+    for (const context of contexts) {
+      const { record } = context;
+      const bracket = canvas.nodes.get(record.bracketNodeId);
+      const summaryNode = canvas.nodes.get(record.summaryNodeId);
+      const parent = canvas.nodes.get(record.parentNodeId);
+      const members = record.memberNodeIds.map((id) => canvas.nodes.get(id)).filter((node) => !!node);
+      if (!bracket || !summaryNode || members.length < 2) continue;
+      let side = record.side;
+      if (parent) {
+        const parentCx = parent.x + parent.width / 2;
+        const memberCx = members.reduce((sum2, node) => sum2 + node.x + node.width / 2, 0) / members.length;
+        side = memberCx >= parentCx ? "right" : "left";
+      }
+      const summaryTree = collectCoveredIds(
+        g.edges,
+        [summaryNode.id],
+        /* @__PURE__ */ new Set([record.bracketNodeId, ...context.covered])
+      );
+      const allHidden = members.every((node) => hidden.has(node.id));
+      const treeSet = new Set(summaryTree);
+      bracket.nodeEl.toggleClass(SUMMARY_HIDDEN_CLASS, allHidden);
+      for (const id of summaryTree) {
+        (_b = canvas.nodes.get(id)) == null ? void 0 : _b.nodeEl.toggleClass(SUMMARY_HIDDEN_CLASS, allHidden);
+      }
+      for (const edge of canvas.edges.values()) {
+        if (treeSet.has(edge.from.node.id)) setEdgeHidden(edge, allHidden);
+      }
+      if (allHidden) continue;
+      const coveredIds = context.covered.filter((id) => !hidden.has(id));
+      for (const nested of contexts) {
+        if (!contains(context, nested)) continue;
+        coveredIds.push(nested.record.bracketNodeId);
+        coveredIds.push(...collectCoveredIds(
+          g.edges,
+          [nested.record.summaryNodeId],
+          /* @__PURE__ */ new Set([nested.record.bracketNodeId])
+        ).filter((id) => !hidden.has(id)));
+      }
+      const coveredRects = coveredIds.map((id) => canvas.nodes.get(id)).filter((node) => !!node);
+      if (coveredRects.length === 0) continue;
+      const geometry = computeSummaryGeometry(coveredRects, side, summaryNode.width, summaryNode.height);
+      if (Math.abs(bracket.x - geometry.bracketX) > 0.5 || Math.abs(bracket.y - geometry.bracketY) > 0.5 || bracket.width !== BRACKET_WIDTH || Math.abs(bracket.height - geometry.bracketHeight) > 0.5) {
+        bracket.moveAndResize({
+          x: geometry.bracketX,
+          y: geometry.bracketY,
+          width: BRACKET_WIDTH,
+          height: geometry.bracketHeight
+        });
+        moved = true;
+      }
+      if ((drag == null ? void 0 : drag.nodeId) !== summaryNode.id) {
+        const dx = geometry.summaryX + record.offsetX - summaryNode.x;
+        const dy = geometry.summaryY + record.offsetY - summaryNode.y;
+        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+          for (const id of summaryTree) {
+            const node = canvas.nodes.get(id);
+            node == null ? void 0 : node.moveTo({ x: node.x + dx, y: node.y + dy });
+          }
+          moved = true;
+        }
+      }
+      bracket.nodeEl.addClass(SUMMARY_BRACKET_CLASS);
+      bracket.nodeEl.toggleClass("is-right", side === "right");
+      bracket.nodeEl.toggleClass("is-left", side === "left");
+      summaryNode.nodeEl.addClass(SUMMARY_CONTENT_CLASS);
+      updateConnector(bracket, summaryNode, side);
+      if (side !== record.side) {
+        record.side = side;
+        writeRecords(records);
+      }
+    }
+    if (moved) {
+      canvas.requestFrame();
+      canvas.requestSave();
+    }
+  };
+  const schedule = () => {
+    if (disposed || scheduled !== null) return;
+    scheduled = win.requestAnimationFrame(() => {
+      scheduled = null;
+      syncNow();
+    });
+  };
+  const findByContentNode = (nodeId) => {
+    var _a;
+    return (_a = getSummaryRecords(canvas).find((record) => record.summaryNodeId === nodeId)) != null ? _a : null;
+  };
+  const create = (selectedIds) => {
+    const records = getSummaryRecords(canvas);
+    const g = graph();
+    const validation = validateSummarySelection(g, selectedIds, records);
+    if (!validation.ok) {
+      new import_obsidian7.Notice(validation.error);
+      return false;
+    }
+    const covered = collectCoveredIds(g.edges, validation.memberIds).map((id) => canvas.nodes.get(id)).filter((node) => !!node);
+    const geometry = computeSummaryGeometry(covered, validation.side, 260, 60);
+    const bracketId = makeId();
+    const summaryNodeId = makeId();
+    canvas.importData({
+      nodes: [
+        {
+          id: bracketId,
+          type: "group",
+          x: geometry.bracketX,
+          y: geometry.bracketY,
+          width: BRACKET_WIDTH,
+          height: geometry.bracketHeight,
+          label: ""
+        },
+        {
+          id: summaryNodeId,
+          type: "text",
+          text: SUMMARY_DEFAULT_TEXT,
+          x: geometry.summaryX,
+          y: geometry.summaryY,
+          width: 260,
+          height: 60
+        }
+      ],
+      edges: []
+    }, false);
+    writeRecords([
+      ...records,
+      {
+        id: makeId(),
+        version: 2,
+        bracketNodeId: bracketId,
+        summaryNodeId,
+        memberNodeIds: validation.memberIds,
+        parentNodeId: validation.parentId,
+        side: validation.side,
+        offsetX: 0,
+        offsetY: 0
+      }
+    ]);
+    syncNow();
+    canvas.requestSave();
+    onLayoutNeeded();
+    win.setTimeout(() => {
+      const node = canvas.nodes.get(summaryNodeId);
+      if (!node || disposed) return;
+      canvas.selectOnly(node);
+      node.startEditing();
+    }, 80);
+    return true;
+  };
+  const removeBracket = (recordId) => {
+    var _a;
+    const records = getSummaryRecords(canvas);
+    const record = records.find((item) => item.id === recordId);
+    if (!record) return;
+    const bracket = canvas.nodes.get(record.bracketNodeId);
+    if (bracket) canvas.removeNode(bracket);
+    (_a = canvas.nodes.get(record.summaryNodeId)) == null ? void 0 : _a.nodeEl.removeClass(SUMMARY_CONTENT_CLASS);
+    writeRecords(records.filter((item) => item.id !== recordId));
+    canvas.requestSave();
+    new import_obsidian7.Notice("\u5DF2\u79FB\u9664\u6982\u8981\u62EC\u53F7\uFF0C\u6982\u8981\u5185\u5BB9\u8282\u70B9\u4FDD\u7559");
+  };
+  const onPointerDown = (event) => {
+    const target = event.target;
+    if (!isHtmlElement(target) || target.closest(".canvas-node-resizer")) return;
+    const nodeEl = target.closest(`.canvas-node.${SUMMARY_CONTENT_CLASS}`);
+    if (!nodeEl) return;
+    for (const node of canvas.nodes.values()) {
+      if (node.nodeEl !== nodeEl) continue;
+      const record = findByContentNode(node.id);
+      if (record) {
+        drag = { recordId: record.id, nodeId: node.id, pointerId: event.pointerId, x: node.x, y: node.y };
+      }
+      return;
+    }
+  };
+  const onPointerUp = (event) => {
+    const current = drag;
+    if (!current || event.pointerId !== current.pointerId) return;
+    win.requestAnimationFrame(() => {
+      drag = null;
+      const node = canvas.nodes.get(current.nodeId);
+      if (!node || disposed) return;
+      const dx = node.x - current.x;
+      const dy = node.y - current.y;
+      if (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) {
+        const records = getSummaryRecords(canvas);
+        const record = records.find((item) => item.id === current.recordId);
+        if (record) {
+          record.offsetX += dx;
+          record.offsetY += dy;
+          writeRecords(records);
+        }
+      }
+      syncNow();
+    });
+  };
+  const onPointerCancel = (event) => {
+    if (drag && event.pointerId === drag.pointerId) {
+      drag = null;
+      schedule();
+    }
+  };
+  canvas.wrapperEl.addEventListener("pointerdown", onPointerDown, true);
+  win.addEventListener("pointerup", onPointerUp, true);
+  win.addEventListener("pointercancel", onPointerCancel, true);
+  syncNow();
+  return {
+    schedule,
+    syncNow,
+    create,
+    removeBracket,
+    findByContentNode,
+    isSummaryNode: (nodeId) => getSummaryRecords(canvas).some((record) => record.summaryNodeId === nodeId),
+    cleanup: () => {
+      disposed = true;
+      if (scheduled !== null) win.cancelAnimationFrame(scheduled);
+      canvas.wrapperEl.removeEventListener("pointerdown", onPointerDown, true);
+      win.removeEventListener("pointerup", onPointerUp, true);
+      win.removeEventListener("pointercancel", onPointerCancel, true);
+      for (const node of canvas.nodes.values()) node.nodeEl.removeClass(SUMMARY_HIDDEN_CLASS);
+      for (const edge of canvas.edges.values()) setEdgeHidden(edge, false);
+    }
+  };
+}
 
 // src/ui/clipboard.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 async function copyText(win, text, successMessage) {
   try {
     await win.navigator.clipboard.writeText(text);
-    new import_obsidian7.Notice(successMessage);
+    new import_obsidian8.Notice(successMessage);
   } catch (e) {
-    new import_obsidian7.Notice("Unable to copy to the clipboard");
+    new import_obsidian8.Notice("Unable to copy to the clipboard");
   }
 }
 
 // src/ui/outline-view.ts
 var OUTLINE_VIEW_TYPE = "cammvas-plus-outline";
-var OutlineView = class extends import_obsidian8.ItemView {
+var OutlineView = class extends import_obsidian9.ItemView {
   constructor(leaf) {
     super(leaf);
     this.canvasLeaf = null;
@@ -23045,6 +23564,8 @@ var OutlineView = class extends import_obsidian8.ItemView {
     this.searchContainerEl = null;
     this.searchComponent = null;
     this.nodeDataById = /* @__PURE__ */ new Map();
+    /** Summary content nodes, rendered under their parent instead of as roots. */
+    this.summaryNodeIds = /* @__PURE__ */ new Set();
     this.renderGeneration = 0;
     this.zoomPadding = 0;
     this.onForestLayout = null;
@@ -23077,12 +23598,12 @@ var OutlineView = class extends import_obsidian8.ItemView {
       cls: "clickable-icon nav-action-button",
       attr: { "aria-label": "Search" }
     });
-    (0, import_obsidian8.setIcon)(searchBtn, "search");
+    (0, import_obsidian9.setIcon)(searchBtn, "search");
     this.collapseBtnEl = navButtons.createDiv({
       cls: "clickable-icon nav-action-button",
       attr: { "aria-label": "Collapse all" }
     });
-    (0, import_obsidian8.setIcon)(this.collapseBtnEl, "chevrons-down-up");
+    (0, import_obsidian9.setIcon)(this.collapseBtnEl, "chevrons-down-up");
     this.collapseBtnEl.addEventListener("click", () => {
       if (!this.lastCanvas) return;
       const allCollapsed = this.groupIds.length > 0 && this.groupIds.every((id) => this.collapsedGroups.has(id));
@@ -23095,7 +23616,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
     });
     this.searchContainerEl = navHeader.createDiv({ cls: "cammvas-outline-search-container" });
     this.searchContainerEl.hide();
-    this.searchComponent = new import_obsidian8.SearchComponent(this.searchContainerEl);
+    this.searchComponent = new import_obsidian9.SearchComponent(this.searchContainerEl);
     this.searchComponent.setPlaceholder("Filter...");
     this.searchComponent.onChange((value) => {
       this.searchQuery = value;
@@ -23151,7 +23672,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
     if (this.searchComponent) {
       this.searchComponent.setValue(this.searchQuery);
     }
-    const forest = buildForest(canvas);
+    const forest = this.attachSummaries(canvas, buildForest(canvas));
     if (forest.length === 0) {
       this.contentEl.createDiv({
         cls: "cammvas-outline-empty",
@@ -23160,8 +23681,9 @@ var OutlineView = class extends import_obsidian8.ItemView {
       return;
     }
     const groups = [];
+    const bracketIds = new Set(getSummaryRecords(canvas).map((record) => record.bracketNodeId));
     for (const nd of canvas.getData().nodes) {
-      if (nd.type !== "group") continue;
+      if (nd.type !== "group" || bracketIds.has(nd.id)) continue;
       const node = canvas.nodes.get(nd.id);
       if (!node) continue;
       groups.push({
@@ -23225,7 +23747,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
     this.groupIds = groups.filter((g) => g.roots.length > 0).map((g) => g.node.id);
     const allCollapsed = this.groupIds.length > 0 && this.groupIds.every((id) => this.collapsedGroups.has(id));
     if (this.collapseBtnEl) {
-      (0, import_obsidian8.setIcon)(this.collapseBtnEl, allCollapsed ? "chevrons-up-down" : "chevrons-down-up");
+      (0, import_obsidian9.setIcon)(this.collapseBtnEl, allCollapsed ? "chevrons-up-down" : "chevrons-down-up");
       this.collapseBtnEl.setAttribute("aria-label", allCollapsed ? "Expand all" : "Collapse all");
     }
     if (this.searchQuery) this.applyFilter();
@@ -23267,15 +23789,15 @@ var OutlineView = class extends import_obsidian8.ItemView {
     });
     if (root.children.length > 0) {
       const collapseIcon = self.createDiv({ cls: "tree-item-icon collapse-icon" });
-      (0, import_obsidian8.setIcon)(collapseIcon, "right-triangle");
+      (0, import_obsidian9.setIcon)(collapseIcon, "right-triangle");
       treeItem.toggleClass("is-collapsed", this.collapsedNodes.has(root.canvasNode.id));
       collapseIcon.addEventListener("click", (e) => {
         e.stopPropagation();
         this.toggleNodeCollapse(treeItem, root.canvasNode.id);
       });
     }
-    const dragHandle = import_obsidian8.Platform.isMobile ? null : self.createDiv({ cls: "tree-item-icon cammvas-outline-drag-handle" });
-    if (dragHandle) (0, import_obsidian8.setIcon)(dragHandle, "grip-vertical");
+    const dragHandle = import_obsidian9.Platform.isMobile ? null : self.createDiv({ cls: "tree-item-icon cammvas-outline-drag-handle" });
+    if (dragHandle) (0, import_obsidian9.setIcon)(dragHandle, "grip-vertical");
     self.createDiv({
       cls: "tree-item-inner",
       text: getNodeTitle(root.canvasNode, this.nodeDataById.get(root.canvasNode.id))
@@ -23347,7 +23869,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
     });
     self.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      const menu = new import_obsidian8.Menu();
+      const menu = new import_obsidian9.Menu();
       menu.addItem((item) => {
         item.setTitle("Copy node link").setIcon("link").onClick(() => {
           const canvasPath = canvas.view.file.path;
@@ -23376,30 +23898,56 @@ var OutlineView = class extends import_obsidian8.ItemView {
       for (const child of root.children) this.renderChildItem(children, child, canvas);
     }
   }
+  /**
+   * Move summary trees from the root list to the end of their parent's
+   * children, so the outline reads like XMind: members, then their summary.
+   */
+  attachSummaries(canvas, forest) {
+    this.summaryNodeIds.clear();
+    const records = getSummaryRecords(canvas);
+    if (records.length === 0) return forest;
+    const roots = new Map(forest.map((root) => [root.canvasNode.id, root]));
+    const attached = /* @__PURE__ */ new Set();
+    for (const record of records) {
+      const summaryRoot = roots.get(record.summaryNodeId);
+      if (!summaryRoot) continue;
+      const parent = findTreeForNode(forest, record.parentNodeId);
+      if (!parent || parent === summaryRoot) continue;
+      summaryRoot.parent = parent;
+      parent.children.push(summaryRoot);
+      attached.add(record.summaryNodeId);
+      this.summaryNodeIds.add(record.summaryNodeId);
+    }
+    return forest.filter((root) => !attached.has(root.canvasNode.id));
+  }
   renderChildItem(container, node, canvas) {
-    const treeItem = container.createDiv({ cls: "tree-item cammvas-outline-node-tree" });
+    const isSummary = this.summaryNodeIds.has(node.canvasNode.id);
+    const treeItem = container.createDiv({
+      cls: `tree-item cammvas-outline-node-tree${isSummary ? " cammvas-outline-summary" : ""}`
+    });
     treeItem.dataset.nodeId = node.canvasNode.id;
     const self = treeItem.createDiv({
       cls: "tree-item-self is-clickable cammvas-outline-item"
     });
     const collapseIcon = self.createDiv({ cls: "tree-item-icon collapse-icon" });
     if (node.children.length > 0) {
-      (0, import_obsidian8.setIcon)(collapseIcon, "right-triangle");
+      (0, import_obsidian9.setIcon)(collapseIcon, "right-triangle");
       treeItem.toggleClass("is-collapsed", this.collapsedNodes.has(node.canvasNode.id));
       collapseIcon.addEventListener("click", (e) => {
         e.stopPropagation();
         this.toggleNodeCollapse(treeItem, node.canvasNode.id);
       });
     }
-    self.createDiv({
+    const inner = self.createDiv({
       cls: "tree-item-inner",
       text: getNodeTitle(node.canvasNode, this.nodeDataById.get(node.canvasNode.id))
     });
+    if (isSummary) inner.prepend(inner.createSpan({ cls: "cammvas-outline-summary-tag", text: "\u6982\u8981" }));
     this.allItemEls.set(node.canvasNode.id, self);
     self.addEventListener("click", () => this.navigateToNode(canvas, node.canvasNode));
     self.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      const menu = new import_obsidian8.Menu();
+      const menu = new import_obsidian9.Menu();
       menu.addItem((item) => {
         item.setTitle("Copy node link").setIcon("link").onClick(() => {
           const canvasPath = canvas.view.file.path;
@@ -23554,7 +24102,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
       cls: "tree-item-self is-clickable cammvas-outline-group"
     });
     const collapseIcon = self.createDiv({ cls: "tree-item-icon collapse-icon" });
-    (0, import_obsidian8.setIcon)(collapseIcon, "right-triangle");
+    (0, import_obsidian9.setIcon)(collapseIcon, "right-triangle");
     const labelContainer = self.createDiv({ cls: "tree-item-inner" });
     const labelSpan = labelContainer.createSpan({ text: group.label });
     labelContainer.createSpan({ cls: "cammvas-outline-group-count", text: `${group.roots.length}` });
@@ -23604,7 +24152,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
     });
     self.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      const menu = new import_obsidian8.Menu();
+      const menu = new import_obsidian9.Menu();
       menu.addItem((item) => {
         item.setTitle("Rename group").setIcon("pencil").onClick(() => this.startGroupRename(labelSpan, group, canvas));
       });
@@ -23742,7 +24290,7 @@ var OutlineView = class extends import_obsidian8.ItemView {
 };
 
 // src/ui/mobile-editing-bar.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/ui/mobile-editing-state.ts
 function getMobileEditingNode(canvas, enabled) {
@@ -23767,7 +24315,7 @@ function registerMobileEditingBar(canvas, isEnabled, canAddSibling, onAddChild, 
       attr: { type: "button", "aria-label": `Create ${label.toLowerCase()} node` }
     });
     const iconEl = button.createSpan({ cls: "cammvas-mobile-editing-action-icon" });
-    (0, import_obsidian9.setIcon)(iconEl, icon);
+    (0, import_obsidian10.setIcon)(iconEl, icon);
     button.createSpan({ text: label });
     return button;
   };
@@ -23778,7 +24326,7 @@ function registerMobileEditingBar(canvas, isEnabled, canAddSibling, onAddChild, 
     attr: { type: "button", "aria-label": "Finish editing node" }
   });
   const doneIcon = doneButton.createSpan({ cls: "cammvas-mobile-editing-action-icon" });
-  (0, import_obsidian9.setIcon)(doneIcon, "check");
+  (0, import_obsidian10.setIcon)(doneIcon, "check");
   doneButton.createSpan({ text: "Done" });
   let activeNode = null;
   let refreshRaf = 0;
@@ -24119,7 +24667,7 @@ function freemindToCanvas(xml, opts) {
 }
 
 // src/main.ts
-var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
+var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -24132,6 +24680,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.cleanupNodeResizeHandler = null;
     this.autoResizeHandle = null;
     this.branchCollapseHandle = null;
+    this.summaryHandle = null;
     this.interceptedCanvas = null;
     this.toggleBtnEl = null;
     this.dragReparentBtnEl = null;
@@ -24160,7 +24709,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.navSkipTracking = false;
     this.lastNavCanvas = null;
     this.cleanupNavHandler = null;
-    this.debouncedOutlineRefresh = (0, import_obsidian10.debounce)(() => {
+    this.debouncedOutlineRefresh = (0, import_obsidian11.debounce)(() => {
       var _a;
       if (this.unloaded) return;
       const canvas = (_a = this.canvasApi.getActiveCanvas()) != null ? _a : this.canvasApi.getAnyCanvas();
@@ -24207,7 +24756,49 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       (canvas) => this.updateGroupBounds(canvas)
     );
     this.keyboardHandler.zoomPadding = this.settings.navigationZoomPadding;
+    this.keyboardHandler.isSummaryNode = (canvas, node) => getSummaryRecords(canvas).some((record) => record.summaryNodeId === node.id);
     this.keyboardHandler.register();
+    this.layoutEngine.afterApply = (canvas) => {
+      var _a;
+      if (canvas === this.interceptedCanvas) (_a = this.summaryHandle) == null ? void 0 : _a.syncNow();
+    };
+    this.addCommand({
+      id: "mindmap-create-summary",
+      name: "Create summary from selected siblings",
+      checkCallback: (checking) => {
+        const canvas = this.canvasApi.getActiveCanvas();
+        if (!canvas || !this.summaryHandle || canvas !== this.interceptedCanvas) return false;
+        const selected = this.getSelectedNodeIds(canvas);
+        if (selected.length < 2) return false;
+        if (checking) return true;
+        this.summaryHandle.create(selected);
+      }
+    });
+    this.addCommand({
+      id: "mindmap-remove-summary",
+      name: "Remove summary bracket (keep content node)",
+      checkCallback: (checking) => {
+        const canvas = this.canvasApi.getActiveCanvas();
+        if (!canvas || !this.summaryHandle || canvas !== this.interceptedCanvas) return false;
+        const node = this.canvasApi.getSelectedNode(canvas);
+        const record = node ? this.summaryHandle.findByContentNode(node.id) : null;
+        if (!record) return false;
+        if (checking) return true;
+        this.summaryHandle.removeBracket(record.id);
+      }
+    });
+    this.addCommand({
+      id: "mindmap-toggle-branch",
+      name: "Toggle selected branch",
+      checkCallback: (checking) => {
+        const canvas = this.canvasApi.getActiveCanvas();
+        if (!canvas || !this.branchCollapseHandle || canvas !== this.interceptedCanvas) return false;
+        const node = this.canvasApi.getSelectedNode(canvas);
+        if (!node || !this.branchCollapseHandle.canToggle(node.id)) return false;
+        if (checking) return true;
+        this.branchCollapseHandle.toggle(node.id);
+      }
+    });
     this.addCommand({
       id: "mindmap-relayout",
       name: "Re-layout mind map",
@@ -24254,6 +24845,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         const selected = this.canvasApi.getSelectedNode(canvas);
         if (!selected) return false;
         const groupIds = getGroupIds(canvas);
+        for (const bracketId of getSummaryBracketIds(canvas)) groupIds.delete(bracketId);
         const cx2 = selected.x + selected.width / 2;
         const cy2 = selected.y + selected.height / 2;
         let targetGroupId = null;
@@ -24368,12 +24960,12 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     );
     this.registerView(OUTLINE_VIEW_TYPE, (leaf) => new OutlineView(leaf));
     this.app.workspace.onLayoutReady(() => {
-      const view = this.app.workspace.getActiveViewOfType(import_obsidian10.ItemView);
+      const view = this.app.workspace.getActiveViewOfType(import_obsidian11.ItemView);
       if (view) this.onLeafChange(view.leaf);
     });
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
-        if (!(file instanceof import_obsidian10.TFolder)) return;
+        if (!(file instanceof import_obsidian11.TFolder)) return;
         menu.addItem((item) => {
           item.setTitle("Import mind map (.mm) to canvas").setIcon("file-input").onClick(() => this.importFreeMindFile(file.path));
         });
@@ -24389,7 +24981,19 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       })
     );
     this.registerEvent(
+      this.app.workspace.on("canvas:selection-menu", (menu, canvas) => {
+        if (!this.isMindmapCanvas(canvas) || canvas !== this.interceptedCanvas) return;
+        const selected = this.getSelectedNodeIds(canvas);
+        if (selected.length < 2) return;
+        menu.addItem((item) => item.setTitle("\u521B\u5EFA\u6982\u8981").setIcon("brackets").onClick(() => {
+          var _a;
+          return (_a = this.summaryHandle) == null ? void 0 : _a.create(selected);
+        }));
+      })
+    );
+    this.registerEvent(
       this.app.workspace.on("canvas:node-menu", (menu, node) => {
+        var _a, _b;
         const canvas = node.canvas;
         menu.addItem((item) => {
           item.setTitle("Copy node link").setIcon("link").onClick(() => {
@@ -24401,10 +25005,17 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
             );
           });
         });
-        if (import_obsidian10.Platform.isMobile && this.isMindmapCanvas(canvas)) {
+        if (import_obsidian11.Platform.isMobile && this.isMindmapCanvas(canvas)) {
           menu.addItem((item) => item.setTitle("Add child node").setIcon("corner-down-right").onClick(() => this.keyboardHandler.addChildNode(canvas, node)));
           menu.addItem((item) => item.setTitle("Add sibling node").setIcon("list-plus").onClick(() => this.keyboardHandler.addSiblingNode(canvas, node)));
           menu.addItem((item) => item.setTitle("Zoom to branch").setIcon("scan").onClick(() => this.navigation.zoomToBranch(canvas, node)));
+        }
+        const summaryRecord = canvas === this.interceptedCanvas ? (_b = (_a = this.summaryHandle) == null ? void 0 : _a.findByContentNode(node.id)) != null ? _b : null : null;
+        if (summaryRecord) {
+          menu.addItem((item) => item.setTitle("\u79FB\u9664\u6982\u8981\u62EC\u53F7\uFF08\u4FDD\u7559\u5185\u5BB9\uFF09").setIcon("brackets").onClick(() => {
+            var _a2;
+            return (_a2 = this.summaryHandle) == null ? void 0 : _a2.removeBracket(summaryRecord.id);
+          }));
         }
         const groupIds = getGroupIds(canvas);
         if (this.isMindmapCanvas(canvas) && !groupIds.has(node.id)) {
@@ -24447,24 +25058,24 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       let canvas = null;
       if (canvasPath) {
         const file = this.app.vault.getAbstractFileByPath(canvasPath);
-        if (file && file instanceof import_obsidian10.TFile) {
+        if (file && file instanceof import_obsidian11.TFile) {
           const leaf = this.app.workspace.getLeaf();
           await leaf.openFile(file);
           canvas = await this.waitForCanvas(canvasPath, leaf.view.containerEl.win);
         }
         if (!canvas) {
-          new import_obsidian10.Notice("Canvas not found");
+          new import_obsidian11.Notice("Canvas not found");
           return;
         }
       }
       canvas != null ? canvas : canvas = (_a = this.canvasApi.getActiveCanvas()) != null ? _a : this.canvasApi.getAnyCanvas();
       if (!canvas) {
-        new import_obsidian10.Notice("Canvas not found");
+        new import_obsidian11.Notice("Canvas not found");
         return;
       }
       const node = canvas.nodes.get(nodeId);
       if (!node) {
-        new import_obsidian10.Notice("Target node not found");
+        new import_obsidian11.Notice("Target node not found");
         return;
       }
       this.canvasApi.selectAndZoom(canvas, node, this.settings.navigationZoomPadding);
@@ -24610,6 +25221,10 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       this.branchCollapseHandle.cleanup();
       this.branchCollapseHandle = null;
     }
+    if (this.summaryHandle) {
+      this.summaryHandle.cleanup();
+      this.summaryHandle = null;
+    }
     this.keyboardHandler.unregisterArrowKeyNavigation();
     this.lastNavCanvas = null;
     if (this.toggleBtnEl) {
@@ -24707,6 +25322,10 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       this.branchCollapseHandle.cleanup();
       this.branchCollapseHandle = null;
     }
+    if (this.summaryHandle) {
+      this.summaryHandle.cleanup();
+      this.summaryHandle = null;
+    }
     this.keyboardHandler.unregisterArrowKeyNavigation();
     const canvas = this.canvasApi.getActiveCanvas();
     if (canvas && canvas !== this.lastNavCanvas) {
@@ -24752,7 +25371,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.keyboardHandler.registerArrowKeyNavigation(canvas);
     this.injectToggleButton(canvas);
     this.updateLayoutButton(canvas);
-    this.cleanupClickHandler = import_obsidian10.Platform.isMobile ? null : this.navigation.registerClickHandler(canvas);
+    this.cleanupClickHandler = import_obsidian11.Platform.isMobile ? null : this.navigation.registerClickHandler(canvas);
     this.cleanupDragHandler = registerDragEndHandler(canvas);
     this.cleanupSubtreeDragHandler = registerSubtreeDragHandler(canvas, this.canvasApi);
     this.cleanupDragReparentHandler = registerDragReparent(
@@ -24769,7 +25388,9 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         if (this.settings.autoLayoutOnReparent) this.layoutEngine.layout(canvas);
         this.updateGroupBounds(canvas);
         (_a2 = this.branchCollapseHandle) == null ? void 0 : _a2.refresh();
-      }
+      },
+      12,
+      (node) => getSummaryRecords(canvas).some((record) => record.summaryNodeId === node.id)
     );
     this.cleanupAutoLayoutOnMoveHandler = registerAutoLayoutOnMove(
       canvas,
@@ -24808,8 +25429,18 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         });
       }
     );
-    this.cleanupGroupDragHandler = import_obsidian10.Platform.isMobile ? null : registerGroupDragHandler(canvas, this.canvasApi);
-    this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi);
+    this.cleanupGroupDragHandler = import_obsidian11.Platform.isMobile ? null : registerGroupDragHandler(canvas, this.canvasApi);
+    this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi, () => {
+      var _a2;
+      if (this.settings.autoLayout && this.isMindmapCanvas(canvas)) {
+        this.preserveViewport(canvas, () => {
+          this.layoutEngine.layout(canvas, new Set(canvas.nodes.keys()));
+        });
+        this.updateGroupBounds(canvas);
+      }
+      (_a2 = this.summaryHandle) == null ? void 0 : _a2.syncNow();
+    });
+    this.summaryHandle = registerSummaries(canvas, () => this.debouncedOutlineRefresh());
     const onDragEnd = () => this.trackedRaf(canvas.wrapperEl.win, () => this.updateGroupBounds(canvas));
     canvas.wrapperEl.addEventListener("pointerup", onDragEnd);
     this.cleanupGroupBoundsHandler = () => canvas.wrapperEl.removeEventListener("pointerup", onDragEnd);
@@ -24897,7 +25528,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         this.finishInsertNode(canvas, newNode, parentNode);
       }
     };
-    if (!import_obsidian10.Platform.isMobile) {
+    if (!import_obsidian11.Platform.isMobile) {
       canvas.wrapperEl.addEventListener("click", onInsertNodeClick, true);
       this.cleanupInsertNodeHandler = () => canvas.wrapperEl.removeEventListener("click", onInsertNodeClick, true);
     }
@@ -24944,7 +25575,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         });
       }
     };
-    if (import_obsidian10.Platform.isMobile) {
+    if (import_obsidian11.Platform.isMobile) {
       this.mobileEditingBarHandle = registerMobileEditingBar(
         canvas,
         () => this.isMindmapCanvas(canvas),
@@ -24962,7 +25593,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         }
       );
     }
-    if (this.settings.mouseNavigation && !import_obsidian10.Platform.isMobile) {
+    if (this.settings.mouseNavigation && !import_obsidian11.Platform.isMobile) {
       const onPointerDown = (e) => {
         if (e.button === 3) {
           e.preventDefault();
@@ -24995,12 +25626,13 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       }
     };
     canvas.requestSave = () => {
-      var _a2;
+      var _a2, _b2;
       if (this.isMindmapCanvas(canvas)) {
         this.branchColors.inheritConnectionColors(canvas);
       }
       origSave();
       (_a2 = this.branchCollapseHandle) == null ? void 0 : _a2.refresh();
+      (_b2 = this.summaryHandle) == null ? void 0 : _b2.schedule();
       this.debouncedOutlineRefresh();
     };
     canvas.createGroupNode = (options) => {
@@ -25010,19 +25642,21 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     };
     if (origUndo) {
       canvas.undo = () => {
-        var _a2;
+        var _a2, _b2;
         origUndo();
         this.canvasApi.invalidateEdgeIndex();
         (_a2 = this.branchCollapseHandle) == null ? void 0 : _a2.refresh();
+        (_b2 = this.summaryHandle) == null ? void 0 : _b2.schedule();
         this.debouncedOutlineRefresh();
       };
     }
     if (origRedo) {
       canvas.redo = () => {
-        var _a2;
+        var _a2, _b2;
         origRedo();
         this.canvasApi.invalidateEdgeIndex();
         (_a2 = this.branchCollapseHandle) == null ? void 0 : _a2.refresh();
+        (_b2 = this.summaryHandle) == null ? void 0 : _b2.schedule();
         this.debouncedOutlineRefresh();
       };
     }
@@ -25044,6 +25678,11 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         view.refresh(canvas);
       }
     }
+  }
+  /** IDs of selected content nodes (groups excluded). */
+  getSelectedNodeIds(canvas) {
+    const groupIds = getGroupIds(canvas);
+    return Array.from(canvas.selection).filter((item) => "nodeEl" in item && !groupIds.has(item.id)).map((node) => node.id);
   }
   /**
    * Collect a node and all its descendants via BFS.
@@ -25074,8 +25713,10 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     const PADDING2 = 20;
     const groupIds = getGroupIds(canvas);
     if (groupIds.size === 0) return;
+    const bracketIds = getSummaryBracketIds(canvas);
     let changed = false;
     for (const groupId of groupIds) {
+      if (bracketIds.has(groupId)) continue;
       const group = canvas.nodes.get(groupId);
       if (!group) continue;
       const gx = group.x;
@@ -25329,7 +25970,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.updateGroupBounds(canvas);
     this.canvasApi.selectAndEdit(canvas, newNode, this.settings.navigationZoomPadding);
   }
-  showOutline(canvas, reveal = !import_obsidian10.Platform.isMobile) {
+  showOutline(canvas, reveal = !import_obsidian11.Platform.isMobile) {
     const leaves = this.app.workspace.getLeavesOfType(OUTLINE_VIEW_TYPE);
     if (leaves.length > 0) {
       this.refreshOutline(canvas);
@@ -25340,7 +25981,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     if (!leaf) return;
     void leaf.setViewState({ type: OUTLINE_VIEW_TYPE }).then(() => {
       if (reveal) void this.app.workspace.revealLeaf(leaf);
-      if (!import_obsidian10.Platform.isMobile) this.reorderOutlineToTop(leaf);
+      if (!import_obsidian11.Platform.isMobile) this.reorderOutlineToTop(leaf);
       this.refreshOutline(canvas);
     });
   }
@@ -25383,7 +26024,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
           verticalGap: this.settings.verticalGap
         });
         if (!canvasData) {
-          new import_obsidian10.Notice(
+          new import_obsidian11.Notice(
             "Failed to parse .mm file. Make sure it is a valid mind map file."
           );
           return;
@@ -25401,10 +26042,10 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
           JSON.stringify(canvasData, null, "	")
         );
         const created = this.app.vault.getAbstractFileByPath(canvasPath);
-        if (created instanceof import_obsidian10.TFile) {
+        if (created instanceof import_obsidian11.TFile) {
           await this.app.workspace.getLeaf(false).openFile(created);
         }
-        new import_obsidian10.Notice(
+        new import_obsidian11.Notice(
           `Imported "${file.name}" as "${canvasPath}"`
         );
       })();
@@ -25486,7 +26127,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.registerDomEvent(dragBtn, "click", (e) => {
       e.stopPropagation();
       if (!canvas.handleSelectionDrag) {
-        new import_obsidian10.Notice("Drag to reparent is unavailable in this canvas version");
+        new import_obsidian11.Notice("Drag to reparent is unavailable in this canvas version");
         return;
       }
       this.settings.dragToReparent = !this.settings.dragToReparent;
@@ -25521,11 +26162,11 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.layoutBtnEl = layoutBtn;
     layoutBtn.after(exportPdfBtn);
     this.exportPdfBtnEl = exportPdfBtn;
-    if (import_obsidian10.Platform.isMobile) {
+    if (import_obsidian11.Platform.isMobile) {
       const actionsBtn = controls.createEl("button", { attr: { type: "button" } });
       actionsBtn.addClass("cammvas-toggle-btn", "cammvas-mobile-actions-btn", "clickable-icon");
       actionsBtn.setAttribute("aria-label", "Mind map actions");
-      (0, import_obsidian10.setIcon)(actionsBtn, "list-plus");
+      (0, import_obsidian11.setIcon)(actionsBtn, "list-plus");
       this.registerDomEvent(actionsBtn, "click", (event) => {
         event.stopPropagation();
         this.showMobileActionsMenu(canvas, actionsBtn);
@@ -25552,7 +26193,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     this.updateMobileActionsButton(canvas);
   }
   showMobileActionsMenu(canvas, anchor2) {
-    const menu = new import_obsidian10.Menu();
+    const menu = new import_obsidian11.Menu();
     const selected = this.canvasApi.getSelectedNode(canvas);
     const isMindmap = this.isMindmapCanvas(canvas);
     menu.addItem((item) => item.setTitle("Create root node").setIcon("circle-plus").setDisabled(!isMindmap).onClick(() => this.createRootNode()));
@@ -25574,7 +26215,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     menu.showAtPosition({ x: rect.left, y: rect.bottom });
   }
   showBranchColorMenu(event, canvas, nodeId, colors) {
-    const colorMenu = new import_obsidian10.Menu();
+    const colorMenu = new import_obsidian11.Menu();
     for (const [color, label] of colors) {
       colorMenu.addItem((item) => item.setTitle(label).setIcon(`cammvas-color-${color}`).onClick(() => this.branchColors.setBranchColor(canvas, nodeId, color)));
     }
@@ -25582,7 +26223,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
   }
   showLayoutMenu(event, canvas) {
     if (!this.isMindmapCanvas(canvas)) return;
-    const layoutMenu = new import_obsidian10.Menu();
+    const layoutMenu = new import_obsidian11.Menu();
     for (const [orientation, title, icon] of [
       ["horizontal", "Horizontal layout", "rows-3"],
       ["vertical", "Vertical layout", "columns-3"]
@@ -25607,11 +26248,11 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     try {
       const pdf = await createMindmapPdf(canvas, safeName, async (path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        if (!(file instanceof import_obsidian10.TFile)) return null;
+        if (!(file instanceof import_obsidian11.TFile)) return null;
         return new Uint8Array(await this.app.vault.readBinary(file));
       }, pageSize);
       if (!pdf) {
-        new import_obsidian10.Notice("Unable to prepare the PDF export.");
+        new import_obsidian11.Notice("Unable to prepare the PDF export.");
         return;
       }
       const folder = await this.ensureExportFolder(outputFolder);
@@ -25621,10 +26262,10 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
         outputPath = `${folder ? `${folder}/` : ""}${safeName} ${index++}.pdf`;
       }
       await this.app.vault.createBinary(outputPath, pdf);
-      new import_obsidian10.Notice(`PDF exported (${pageSize.toUpperCase()}) to ${outputPath}`);
+      new import_obsidian11.Notice(`PDF exported (${pageSize.toUpperCase()}) to ${outputPath}`);
     } catch (error2) {
       console.error("Cammvas PDF export failed", error2);
-      new import_obsidian10.Notice("Unable to export the PDF. Check the developer console for details.");
+      new import_obsidian11.Notice("Unable to export the PDF. Check the developer console for details.");
     }
   }
   async ensureExportFolder(value) {
@@ -25638,7 +26279,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       const existing = this.app.vault.getAbstractFileByPath(path);
       if (!existing) {
         await this.app.vault.createFolder(path);
-      } else if (!(existing instanceof import_obsidian10.TFolder)) {
+      } else if (!(existing instanceof import_obsidian11.TFolder)) {
         throw new Error(`Export folder path is a file: ${path}`);
       }
     }
@@ -25648,7 +26289,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     if (!this.toggleBtnEl) return;
     const isActive = this.isMindmapCanvas(canvas);
     this.toggleBtnEl.empty();
-    (0, import_obsidian10.setIcon)(this.toggleBtnEl, isActive ? "network" : "layout-dashboard");
+    (0, import_obsidian11.setIcon)(this.toggleBtnEl, isActive ? "network" : "layout-dashboard");
     this.toggleBtnEl.toggleClass("is-active", isActive);
     this.toggleBtnEl.setAttribute(
       "aria-label",
@@ -25661,7 +26302,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     const controlEnabled = mindmapEnabled && !!canvas.handleSelectionDrag;
     const isActive = controlEnabled && this.settings.dragToReparent;
     this.dragReparentBtnEl.empty();
-    (0, import_obsidian10.setIcon)(this.dragReparentBtnEl, "git-branch");
+    (0, import_obsidian11.setIcon)(this.dragReparentBtnEl, "git-branch");
     this.dragReparentBtnEl.toggleClass("is-active", isActive);
     this.dragReparentBtnEl.toggleAttribute("disabled", !controlEnabled);
     this.dragReparentBtnEl.setAttribute("aria-disabled", String(!controlEnabled));
@@ -25675,7 +26316,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     const controlEnabled = !!canvas && this.isMindmapCanvas(canvas);
     const isActive = controlEnabled && this.settings.autoLayoutOnEdit;
     this.autoLayoutOnEditBtnEl.empty();
-    (0, import_obsidian10.setIcon)(this.autoLayoutOnEditBtnEl, "layout-grid");
+    (0, import_obsidian11.setIcon)(this.autoLayoutOnEditBtnEl, "layout-grid");
     this.autoLayoutOnEditBtnEl.toggleClass("is-active", isActive);
     this.autoLayoutOnEditBtnEl.toggleAttribute("disabled", !controlEnabled);
     this.autoLayoutOnEditBtnEl.setAttribute("aria-disabled", String(!controlEnabled));
@@ -25688,7 +26329,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     if (!this.layoutBtnEl) return;
     const enabled = !!canvas && this.isMindmapCanvas(canvas) && canvas.nodes.size > 0;
     this.layoutBtnEl.empty();
-    (0, import_obsidian10.setIcon)(this.layoutBtnEl, "layout-template");
+    (0, import_obsidian11.setIcon)(this.layoutBtnEl, "layout-template");
     this.layoutBtnEl.toggleAttribute("disabled", !enabled);
     this.layoutBtnEl.setAttribute("aria-disabled", String(!enabled));
     this.layoutBtnEl.setAttribute(
@@ -25700,7 +26341,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     if (!this.exportPdfBtnEl) return;
     const enabled = !!canvas && this.isMindmapCanvas(canvas) && canvas.nodes.size > 0;
     this.exportPdfBtnEl.empty();
-    (0, import_obsidian10.setIcon)(this.exportPdfBtnEl, "file-down");
+    (0, import_obsidian11.setIcon)(this.exportPdfBtnEl, "file-down");
     this.exportPdfBtnEl.toggleAttribute("disabled", !enabled);
     this.exportPdfBtnEl.setAttribute("aria-disabled", String(!enabled));
     this.exportPdfBtnEl.setAttribute(
@@ -25713,7 +26354,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     const controlEnabled = !!canvas && this.isMindmapCanvas(canvas);
     const isActive = controlEnabled && this.settings.enterCreatesSibling;
     this.enterTabBtnEl.empty();
-    (0, import_obsidian10.setIcon)(this.enterTabBtnEl, "keyboard");
+    (0, import_obsidian11.setIcon)(this.enterTabBtnEl, "keyboard");
     this.enterTabBtnEl.toggleClass("is-active", isActive);
     this.enterTabBtnEl.toggleAttribute("disabled", !controlEnabled);
     this.enterTabBtnEl.setAttribute("aria-disabled", String(!controlEnabled));
@@ -25735,16 +26376,16 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
   relayoutSelectedBranch(canvas, branchParent) {
     var _a;
     if (!this.isMindmapCanvas(canvas)) {
-      new import_obsidian10.Notice("Enable mindmap mode before re-layout");
+      new import_obsidian11.Notice("Enable mindmap mode before re-layout");
       return;
     }
     const node = branchParent != null ? branchParent : this.canvasApi.getSelectedNode(canvas);
     if (!node) {
-      new import_obsidian10.Notice("Select a branch parent before re-layout");
+      new import_obsidian11.Notice("Select a branch parent before re-layout");
       return;
     }
     if (this.canvasApi.getChildNodes(canvas, node).length === 0) {
-      new import_obsidian10.Notice("The selected node has no child branch to re-layout");
+      new import_obsidian11.Notice("The selected node has no child branch to re-layout");
       return;
     }
     this.layoutEngine.layoutChildren(canvas, node.id);
@@ -25846,11 +26487,11 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
     var _a;
     const canvas = (_a = this.canvasApi) == null ? void 0 : _a.getActiveCanvas();
     if (!canvas) {
-      new import_obsidian10.Notice("Open a canvas before creating a root node");
+      new import_obsidian11.Notice("Open a canvas before creating a root node");
       return;
     }
     if (!this.isMindmapCanvas(canvas)) {
-      new import_obsidian10.Notice("Enable mindmap mode before creating a root node");
+      new import_obsidian11.Notice("Enable mindmap mode before creating a root node");
       return;
     }
     const incomingIds = new Set(
@@ -25898,7 +26539,7 @@ var CanvasMindMapPlugin = class extends import_obsidian10.Plugin {
       ["6", "#a882f7"]
     ];
     for (const [id, color] of colors) {
-      (0, import_obsidian10.addIcon)(`cammvas-color-${id}`, `<svg viewBox="0 0 24 24" fill="${color}"><circle cx="12" cy="12" r="8"/></svg>`);
+      (0, import_obsidian11.addIcon)(`cammvas-color-${id}`, `<svg viewBox="0 0 24 24" fill="${color}"><circle cx="12" cy="12" r="8"/></svg>`);
     }
   }
 };

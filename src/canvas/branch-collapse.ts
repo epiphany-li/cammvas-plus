@@ -1,6 +1,6 @@
 import { setIcon } from "obsidian";
 import type { Canvas, CanvasEdge, CanvasNode } from "../types/canvas-internal";
-import { CanvasAPI } from "./canvas-api";
+import { CanvasAPI, writeCanvasDataKey } from "./canvas-api";
 import { collectCollapsedDescendantIds } from "./branch-collapse-state";
 
 const BUTTON_CLASS = "cammvas-canvas-collapse-button";
@@ -8,12 +8,18 @@ export const COLLAPSED_HIDDEN_CLASS = "cammvas-canvas-branch-hidden";
 
 export interface BranchCollapseHandle {
 	refresh: () => void;
+	/** Collapse or expand the branch below a node. */
+	toggle: (nodeId: string) => void;
+	/** Whether the node has children that can be collapsed. */
+	canToggle: (nodeId: string) => boolean;
 	cleanup: () => void;
 }
 
 export function registerBranchCollapse(
 	canvas: Canvas,
-	canvasApi: CanvasAPI
+	canvasApi: CanvasAPI,
+	/** Called after the collapsed set changed, e.g. to re-layout the map. */
+	onToggled?: (nodeId: string) => void
 ): BranchCollapseHandle {
 	let disposed = false;
 	let refreshRaf: number | null = null;
@@ -29,15 +35,12 @@ export function registerBranchCollapse(
 	};
 
 	const toggle = (nodeId: string): void => {
-		const data = canvas.getData();
-		const collapsed = new Set(data.mindmapCollapsed ?? []);
+		const collapsed = new Set(canvas.getData().mindmapCollapsed ?? []);
 		if (collapsed.has(nodeId)) collapsed.delete(nodeId);
 		else collapsed.add(nodeId);
-		data.mindmapCollapsed = [...collapsed];
-		canvas.setData(data);
-		canvas.requestSave();
-		scheduleRefresh();
-		win.setTimeout(scheduleRefresh, 50);
+		writeCanvasDataKey(canvas, "mindmapCollapsed", [...collapsed]);
+		refresh();
+		onToggled?.(nodeId);
 	};
 
 	const syncButton = (
@@ -132,6 +135,8 @@ export function registerBranchCollapse(
 
 	return {
 		refresh: scheduleRefresh,
+		toggle,
+		canToggle: (nodeId) => canvasApi.getOutgoingEdges(canvas, nodeId).length > 0,
 		cleanup: () => {
 			disposed = true;
 			observer.disconnect();

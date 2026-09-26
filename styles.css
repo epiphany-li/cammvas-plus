@@ -357,3 +357,83 @@
 		transition: none;
 	}
 }
+
+/* ── Summaries (XMind-style 概要) ─────────────────────────────── */
+
+/* The bracket is a narrow group node; hide its native chrome and draw a brace. */
+.canvas-node.cammvas-summary-bracket {
+	--canvas-node-border: transparent;
+	--canvas-node-border-color: transparent;
+	--canvas-node-border-color-hovered: transparent;
+	--canvas-node-border-color-selected: transparent;
+	background: transparent !important;
+	box-shadow: none !important;
+	pointer-events: none;
+	color: transparent !important;
+	font-size: 0 !important;
+}
+
+.canvas-node.cammvas-summary-bracket > * {
+	visibility: hidden !important;
+}
+
+.canvas-node.cammvas-summary-bracket::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	box-sizing: border-box;
+	pointer-events: none;
+	z-index: 5;
+	border: 2px solid var(--text-muted);
+}
+
+.canvas-node.cammvas-summary-bracket.is-right::after {
+	border-left: 0;
+	border-radius: 0 6px 6px 0;
+}
+
+.canvas-node.cammvas-summary-bracket.is-left::after {
+	border-right: 0;
+	border-radius: 6px 0 0 6px;
+}
+
+/* Connector from the bracket's midpoint to the summary content node. */
+.canvas-node.cammvas-summary-bracket::before {
+	content: "";
+	position: absolute;
+	top: 50%;
+	width: var(--cammvas-summary-line-length, 56px);
+	border-top: 2px solid var(--text-muted);
+	transform: rotate(var(--cammvas-summary-line-angle, 0rad));
+	transform-origin: 0 50%;
+	pointer-events: none;
+	z-index: 5;
+}
+
+.canvas-node.cammvas-summary-bracket.is-right::before {
+	left: 100%;
+}
+
+.canvas-node.cammvas-summary-bracket.is-left::before {
+	left: 0;
+}
+
+.canvas-node.cammvas-summary-bracket .canvas-node-resizer,
+.canvas-node.cammvas-summary-bracket .canvas-node-connection-point,
+.canvas-node.cammvas-summary-bracket .cammvas-canvas-collapse-button {
+	display: none !important;
+}
+
+.canvas-wrapper .cammvas-summary-hidden {
+	display: none !important;
+}
+
+.cammvas-outline-summary-tag {
+	flex-shrink: 0;
+	margin-inline-end: 6px;
+	padding: 0 5px;
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
