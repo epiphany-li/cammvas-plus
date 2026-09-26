@@ -940,15 +940,16 @@ export default class CanvasMindMapPlugin extends Plugin {
 					}
 				}
 				const skipAnimationNodeIds = new Set(canvas.nodes.keys());
+				const anchor = resizedNodes[0] ?? null;
 				this.preserveViewport(canvas, () => {
 					this.layoutEngine.layout(canvas, skipAnimationNodeIds);
-				});
+				}, anchor);
 				this.trackedRaf(canvas.wrapperEl.win, () => {
 					if (this.canvasApi.getActiveCanvas() !== canvas) return;
 					this.preserveViewport(canvas, () => {
 						const heightChanged = this.resizeNodes(canvas, Array.from(affectedNodes.values()));
 						if (heightChanged) this.layoutEngine.layout(canvas, skipAnimationNodeIds);
-					});
+					}, anchor);
 					this.updateGroupBounds(canvas);
 					this.branchCollapseHandle?.refresh();
 					canvas.requestSave();
@@ -962,11 +963,12 @@ export default class CanvasMindMapPlugin extends Plugin {
 			: registerGroupDragHandler(canvas, this.canvasApi);
 
 		// Add persistent collapse controls to nodes that have descendants.
-		this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi, () => {
+		this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi, (nodeId) => {
 			if (this.settings.autoLayout && this.isMindmapCanvas(canvas)) {
+				// The node that was toggled stays under the pointer.
 				this.preserveViewport(canvas, () => {
 					this.layoutEngine.layout(canvas, new Set(canvas.nodes.keys()));
-				});
+				}, canvas.nodes.get(nodeId) ?? null);
 				this.updateGroupBounds(canvas);
 			}
 			this.summaryHandle?.syncNow();
@@ -1114,7 +1116,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 						this.resizeNodes(canvas, this.collectSubtreeNodes(canvas, root.canvasNode));
 						if (this.settings.autoLayoutOnEdit) this.layoutEngine.layout(canvas);
 						this.updateGroupBounds(canvas);
-					});
+					}, editedNode);
 				});
 			},
 			(canvas, editedNode) => this.queueOrderedListRenumber(canvas, editedNode),
@@ -1366,14 +1368,18 @@ export default class CanvasMindMapPlugin extends Plugin {
 	 */
 	private registerRenderedNodeAutoResize(canvas: Canvas): void {
 		const pendingIds = new Set<string>();
-		let scheduled = false;
+		const SETTLE_MS = 160;
+		let settleTimer: { id: number; win: Window } | null = null;
 		const queueNode = (node: CanvasNode | undefined): void => {
 			if (!node || node.isEditing) return;
 			pendingIds.add(node.id);
-			if (scheduled) return;
-			scheduled = true;
-			this.trackedRaf(canvas.wrapperEl.win, () => {
-				scheduled = false;
+			// Restart the timer on every render so a scroll produces one relayout, not many.
+			if (settleTimer) {
+				settleTimer.win.clearTimeout(settleTimer.id);
+				this.pendingTimers.delete(settleTimer);
+			}
+			settleTimer = this.trackedTimeout(canvas.wrapperEl.win, () => {
+				settleTimer = null;
 				if (this.canvasApi.getActiveCanvas() !== canvas) {
 					pendingIds.clear();
 					return;
@@ -1387,11 +1393,11 @@ export default class CanvasMindMapPlugin extends Plugin {
 					if (changed && this.settings.autoLayout && this.isMindmapCanvas(canvas)) {
 						this.layoutEngine.layout(canvas, new Set(canvas.nodes.keys()));
 					}
-				});
+				}, "center");
 				if (!changed) return;
 				this.updateGroupBounds(canvas);
 				this.branchCollapseHandle?.refresh();
-			});
+			}, SETTLE_MS);
 		};
 		const queueFromElement = (value: unknown, includeDescendants = false): void => {
 			if (!isHtmlElement(value)) return;
@@ -1472,21 +1478,56 @@ export default class CanvasMindMapPlugin extends Plugin {
 		}, 500);
 	}
 
-	/** Preserve the current canvas viewport while automatic resize/layout mutates nodes. */
-	private preserveViewport(canvas: Canvas, mutate: () => void): void {
+	/**
+	 * Keep the viewport stable while automatic resize/layout mutates nodes.
+	 * With an anchor, the viewport follows that node so it stays at the same
+	 * screen position even when the whole map is re-laid out around it;
+	 * "center" anchors the node closest to the middle of the screen.
+	 */
+	private preserveViewport(
+		canvas: Canvas,
+		mutate: () => void,
+		anchor: CanvasNode | "center" | null = null
+	): void {
 		const viewport = { x: canvas.x, y: canvas.y, tx: canvas.tx, ty: canvas.ty, zoom: canvas.zoom, tZoom: canvas.tZoom };
+		const anchorNode = anchor === "center" ? this.findViewportAnchor(canvas) : anchor;
+		const before = anchorNode ? { x: anchorNode.x, y: anchorNode.y } : null;
+		mutate();
+		let dx = 0;
+		let dy = 0;
+		if (anchorNode && before && canvas.nodes.get(anchorNode.id) === anchorNode) {
+			dx = anchorNode.x - before.x;
+			dy = anchorNode.y - before.y;
+		}
 		const restore = () => {
-			canvas.x = viewport.x;
-			canvas.y = viewport.y;
-			canvas.tx = viewport.tx;
-			canvas.ty = viewport.ty;
+			canvas.x = viewport.x + dx;
+			canvas.y = viewport.y + dy;
+			canvas.tx = viewport.tx + dx;
+			canvas.ty = viewport.ty + dy;
 			canvas.zoom = viewport.zoom;
 			canvas.tZoom = viewport.tZoom;
 			canvas.requestFrame();
 		};
-		mutate();
 		restore();
 		this.trackedRaf(canvas.wrapperEl.win, restore);
+	}
+
+	/** The visible node whose center is closest to the middle of the viewport. */
+	private findViewportAnchor(canvas: Canvas): CanvasNode | null {
+		let best: CanvasNode | null = null;
+		let bestDistance = Infinity;
+		for (const node of canvas.nodes.values()) {
+			if (node.nodeEl?.hasClass("cammvas-canvas-branch-hidden")) continue;
+			const distance = Math.hypot(
+				node.x + node.width / 2 - canvas.x,
+				node.y + node.height / 2 - canvas.y
+			);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				best = node;
+			}
+		}
+		return best;
 	}
 
 	/**
@@ -2088,13 +2129,14 @@ export default class CanvasMindMapPlugin extends Plugin {
 	}
 
 	/** Schedule a setTimeout that is automatically cancelled on unload/canvas switch. */
-	private trackedTimeout(win: Window, callback: () => void, ms: number): void {
+	private trackedTimeout(win: Window, callback: () => void, ms: number): { id: number; win: Window } {
 		const pending = { id: 0, win };
 		pending.id = win.setTimeout(() => {
 			this.pendingTimers.delete(pending);
 			callback();
 		}, ms);
 		this.pendingTimers.add(pending);
+		return pending;
 	}
 
 	/** Schedule a requestAnimationFrame that is automatically cancelled on cleanup. */
