@@ -15,6 +15,31 @@ export interface BranchCollapseHandle {
 	cleanup: () => void;
 }
 
+/**
+ * Tree depth of every node that belongs to a branch (root = 0), used for
+ * hierarchy styling. Lone nodes without children or parent get no depth.
+ */
+function computeDepths(canvas: Canvas, childIds: (nodeId: string) => string[]): Map<string, number> {
+	const hasParent = new Set<string>();
+	for (const edge of canvas.edges.values()) hasParent.add(edge.to.node.id);
+	const depths = new Map<string, number>();
+	for (const node of canvas.nodes.values()) {
+		if (hasParent.has(node.id) || childIds(node.id).length === 0) continue;
+		depths.set(node.id, 0);
+		const queue = [node.id];
+		while (queue.length > 0) {
+			const id = queue.shift()!;
+			const depth = depths.get(id)!;
+			for (const childId of childIds(id)) {
+				if (depths.has(childId)) continue;
+				depths.set(childId, depth + 1);
+				queue.push(childId);
+			}
+		}
+	}
+	return depths;
+}
+
 export function registerBranchCollapse(
 	canvas: Canvas,
 	canvasApi: CanvasAPI,
@@ -46,7 +71,8 @@ export function registerBranchCollapse(
 	const syncButton = (
 		node: CanvasNode,
 		collapsed: boolean,
-		descendantCount: number
+		descendantCount: number,
+		side: "left" | "right"
 	): void => {
 		let button = node.nodeEl.querySelector<HTMLElement>(`:scope > .${BUTTON_CLASS}`);
 		if (!button) {
@@ -76,6 +102,8 @@ export function registerBranchCollapse(
 			`${collapsed ? "Expand" : "Collapse"} branch (${descendantCount} descendant${descendantCount === 1 ? "" : "s"})`
 		);
 		button.dataset.descendantCount = String(descendantCount);
+		// Sit on the side the branch grows toward, where the connecting line leaves.
+		button.dataset.side = side;
 	};
 
 	const setEdgeHidden = (edge: CanvasEdge, hidden: boolean): void => {
@@ -106,8 +134,12 @@ export function registerBranchCollapse(
 		});
 		if (hiddenSelection) canvas.deselectAll();
 
+		const depths = computeDepths(canvas, childIds);
 		for (const node of canvas.nodes.values()) {
 			node.nodeEl.toggleClass(COLLAPSED_HIDDEN_CLASS, hiddenIds.has(node.id));
+			const depth = depths.get(node.id);
+			if (depth === undefined) delete node.nodeEl.dataset.cammvasDepth;
+			else node.nodeEl.dataset.cammvasDepth = String(Math.min(depth, 2));
 			const children = childIds(node.id);
 			const existing = node.nodeEl.querySelector<HTMLElement>(`:scope > .${BUTTON_CLASS}`);
 			if (children.length === 0) {
@@ -115,7 +147,12 @@ export function registerBranchCollapse(
 				continue;
 			}
 			const descendants = collectCollapsedDescendantIds([node.id], childIds);
-			syncButton(node, collapsedIds.has(node.id), descendants.size);
+			const nodeCx = node.x + node.width / 2;
+			const childCx = children.reduce((sum, id) => {
+				const child = canvas.nodes.get(id);
+				return sum + (child ? child.x + child.width / 2 : nodeCx);
+			}, 0) / children.length;
+			syncButton(node, collapsedIds.has(node.id), descendants.size, childCx < nodeCx ? "left" : "right");
 		}
 
 		for (const edge of canvas.edges.values()) {
@@ -123,6 +160,9 @@ export function registerBranchCollapse(
 				edge,
 				hiddenIds.has(edge.from.node.id) || hiddenIds.has(edge.to.node.id)
 			);
+			const depth = depths.get(edge.to.node.id);
+			if (depth === undefined) edge.lineGroupEl?.removeAttribute("data-cammvas-depth");
+			else edge.lineGroupEl?.setAttribute("data-cammvas-depth", String(Math.min(depth, 2)));
 		}
 
 		observer.observe(canvas.wrapperEl, { childList: true, subtree: true });

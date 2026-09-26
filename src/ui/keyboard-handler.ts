@@ -1,5 +1,5 @@
 import { Platform, Plugin } from "obsidian";
-import type { Canvas, CanvasNode, CMEditorView, CMContentElement } from "../types/canvas-internal";
+import type { Canvas, CanvasNode, CMEditorView } from "../types/canvas-internal";
 import { CanvasAPI, getNodeEditorView, startEditingAtEnd } from "../canvas/canvas-api";
 import { NodeOperations } from "../mindmap/node-operations";
 import { LayoutEngine } from "../mindmap/layout-engine";
@@ -622,6 +622,13 @@ export class KeyboardHandler {
 	 * Returns the selected text, or null if nothing is selected.
 	 */
 	private extractAndDeleteSelection(node: CanvasNode): string | null {
+		const editor = node.child?.editor;
+		if (editor?.getSelection && editor.replaceSelection) {
+			const selected = editor.getSelection();
+			if (!selected) return null;
+			editor.replaceSelection("");
+			return selected;
+		}
 		const view = this.getEditorView(node);
 		if (!view) return null;
 		const { from, to } = view.state.selection.main;

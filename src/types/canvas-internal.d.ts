@@ -39,9 +39,8 @@ export interface CanvasNode {
 	unknownData: Record<string, unknown>;
 	zIndex: number;
 	child?: {
-		editor?: {
-			hasFocus: () => boolean;
-		};
+		/** Obsidian's Editor API for the node while it is being edited. */
+		editor?: NodeEditor;
 	};
 
 	moveTo(pos: { x: number; y: number }): void;
@@ -59,6 +58,25 @@ export interface CanvasNode {
 	blur(): void;
 	focus(): void;
 	getBBox(): { minX: number; minY: number; maxX: number; maxY: number };
+}
+
+export interface EditorPosition {
+	line: number;
+	ch: number;
+}
+
+/** Subset of Obsidian's Editor used on canvas text nodes. */
+export interface NodeEditor {
+	hasFocus: () => boolean;
+	focus?: () => void;
+	getValue?: () => string;
+	lastLine?: () => number;
+	getLine?: (line: number) => string;
+	setSelection?: (anchor: EditorPosition, head?: EditorPosition) => void;
+	getSelection?: () => string;
+	replaceSelection?: (text: string) => void;
+	replaceRange?: (text: string, from: EditorPosition, to?: EditorPosition) => void;
+	offsetToPos?: (offset: number) => EditorPosition;
 }
 
 export interface CanvasEdge {

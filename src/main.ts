@@ -1498,6 +1498,16 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 	private renumberOrderedListNow(canvas: Canvas, node: CanvasNode): boolean {
 		if (this.canvasApi.getActiveCanvas() !== canvas || !node.isEditing) return false;
+		const editor = node.child?.editor;
+		if (editor?.getValue && editor.replaceRange && editor.offsetToPos) {
+			const changes = computeOrderedListRenumberChanges(editor.getValue());
+			if (changes.length === 0) return false;
+			// Apply back to front so earlier offsets stay valid.
+			for (const change of [...changes].sort((a, b) => b.from - a.from)) {
+				editor.replaceRange(change.insert, editor.offsetToPos(change.from), editor.offsetToPos(change.to));
+			}
+			return true;
+		}
 		const view = this.keyboardHandler.getEditorView(node);
 		if (!view) return false;
 		const changes = computeOrderedListRenumberChanges(view.state.doc.toString());

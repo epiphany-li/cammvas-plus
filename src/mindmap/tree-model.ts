@@ -156,7 +156,7 @@ export function getNodeTitle(node: CanvasNode, data?: CanvasNodeFileData): strin
 export function stripInlineMarkdown(line: string): string {
 	return line
 		.replace(/^#+\s*/, "")
-		.replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
+		.replace(/^[-*+]\s+(?:\[[ xX]\]\s+)?/, "")
 		.replace(/^>\s*/, "")
 		.replace(/!?\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
 		.replace(/!?\[\[([^\]]*)\]\]/g, "$1")

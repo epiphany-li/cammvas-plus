@@ -5,25 +5,10 @@
 	font-size: var(--cammvas-edge-label-font-size);
 }
 
-/* Mindmap mode toggle button in canvas toolbar */
-.cammvas-toggle-btn {
-	color: var(--text-muted);
-	background-color: var(--background-secondary);
-	box-shadow: var(--shadow-s);
-}
-
-.cammvas-toggle-btn:not(:disabled):hover {
-	color: var(--text-normal);
-	background-color: var(--background-modifier-hover);
-}
-
+/* Mind map button in the canvas toolbar: styled like the native controls,
+   with the accent only on the icon when mind map mode is on. */
 .canvas-controls .cammvas-toggle-btn.is-active {
-	color: var(--text-on-accent);
-	background-color: var(--interactive-accent);
-}
-
-.canvas-controls .cammvas-toggle-btn.is-active:not(:disabled):hover {
-	background-color: var(--interactive-accent-hover);
+	color: var(--interactive-accent);
 }
 
 .cammvas-toggle-btn:disabled {
@@ -85,95 +70,160 @@
 	display: none;
 }
 
-/* Persistent branch collapse controls on Canvas nodes */
+/* Branch collapse control: a small circle on the branch line beside the node,
+   shown on hover/selection; a collapsed branch shows its hidden-node count. */
 .cammvas-canvas-collapse-button {
-	position: absolute;
-	top: 5px;
-	right: 5px;
-	z-index: 10;
-	width: 20px;
-	height: 20px;
-	padding: 3px;
-	border-radius: var(--radius-s);
-	background: var(--background-secondary);
-	border: 0;
-	box-shadow: none;
-	color: var(--text-muted);
-	opacity: 0.45;
-}
-
-.canvas-node:hover > .cammvas-canvas-collapse-button,
-.cammvas-canvas-collapse-button:hover {
-	color: var(--text-normal);
-	opacity: 1;
-}
-
-.cammvas-canvas-collapse-button[data-state="collapsed"] {
-	color: var(--interactive-accent);
-	opacity: 1;
-}
-
-.cammvas-canvas-collapse-button[data-state="collapsed"]::after {
-	content: attr(data-descendant-count);
+	--cammvas-collapse-color: var(--canvas-color, var(--text-muted));
 	position: absolute;
 	top: 50%;
-	left: calc(100% + 4px);
-	transform: translateY(-50%);
-	display: inline-flex;
+	right: -30px;
+	z-index: 10;
+	display: flex;
 	align-items: center;
 	justify-content: center;
 	min-width: 18px;
 	height: 18px;
-	padding: 0 5px;
-	border: 1px solid color-mix(in srgb, var(--interactive-accent) 55%, transparent);
+	padding: 0 4px;
+	transform: translateY(-50%);
+	border: 1.5px solid var(--cammvas-collapse-color);
 	border-radius: 999px;
 	background: var(--background-primary);
-	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
-	color: var(--interactive-accent);
+	box-shadow: none;
+	color: var(--cammvas-collapse-color);
+	opacity: 0;
+	transition: opacity 120ms ease-in-out;
+}
+
+.cammvas-canvas-collapse-button[data-side="left"] {
+	right: auto;
+	left: -30px;
+}
+
+.cammvas-canvas-collapse-button svg {
+	width: 12px;
+	height: 12px;
+	stroke-width: 3px;
+}
+
+.canvas-node:hover > .cammvas-canvas-collapse-button,
+.canvas-node.is-focused > .cammvas-canvas-collapse-button,
+.canvas-node.is-selected > .cammvas-canvas-collapse-button,
+.cammvas-canvas-collapse-button[data-state="collapsed"] {
+	opacity: 1;
+}
+
+.cammvas-canvas-collapse-button[data-state="collapsed"] svg {
+	display: none;
+}
+
+.cammvas-canvas-collapse-button[data-state="collapsed"]::after {
+	content: attr(data-descendant-count);
 	font-size: 11px;
 	font-weight: 600;
 	line-height: 1;
-	pointer-events: none;
+}
+
+.cammvas-canvas-collapse-button:hover {
+	background: var(--background-modifier-hover);
 }
 
 .canvas-wrapper .cammvas-canvas-branch-hidden {
 	display: none;
 }
 
-/* Cards grow to their complete content height; suppress internal scrollbars. */
-.canvas-wrapper .canvas-node-content {
+/* Mind map canvases only: cards grow to their complete content height, so
+   suppress internal scrollbars. Ordinary canvases keep native scrolling. */
+.canvas-wrapper.cammvas-mindmap .canvas-node-content {
 	overflow: hidden !important;
 }
 
-.canvas-wrapper .canvas-node-content .markdown-embed-content,
-.canvas-wrapper .canvas-node-content .markdown-preview-view {
+.canvas-wrapper.cammvas-mindmap .canvas-node-content .markdown-embed-content,
+.canvas-wrapper.cammvas-mindmap .canvas-node-content .markdown-preview-view {
 	overflow: hidden !important;
 	max-height: none !important;
 	scrollbar-gutter: auto;
 }
 
-.canvas-wrapper .canvas-node .cm-scroller,
+.canvas-wrapper.cammvas-mindmap .canvas-node .cm-scroller,
 .cammvas-editor-scroller {
 	overflow: hidden !important;
 	scrollbar-width: none !important;
 }
 
-.canvas-wrapper .canvas-node .cm-scroller::-webkit-scrollbar,
+.canvas-wrapper.cammvas-mindmap .canvas-node .cm-scroller::-webkit-scrollbar,
 .cammvas-editor-scroller::-webkit-scrollbar {
 	display: none !important;
 }
 
-.canvas-wrapper
+.canvas-wrapper.cammvas-mindmap
 	.canvas-node-content.markdown-embed
 	> .markdown-embed-content
 	> .markdown-preview-view::before,
-.canvas-wrapper
+.canvas-wrapper.cammvas-mindmap
 	.canvas-node-content.markdown-embed
 	> .markdown-embed-content
 	> .markdown-preview-view::after {
 	min-height: 12px;
 	max-height: 12px;
 	flex: 0 0 12px;
+}
+
+/* ── Mind map hierarchy ──────────────────────────────────────────
+   Root: solid accent card. Main branches: tinted and bold.
+   Deeper topics: outline only, so the map reads from the center out. */
+.cammvas-mindmap .canvas-node[data-cammvas-depth="0"]:not(.cammvas-summary-content) > .canvas-node-container {
+	border-width: 2px;
+	border-radius: 14px;
+	background-color: var(--interactive-accent);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+
+.cammvas-mindmap .canvas-node[data-cammvas-depth="0"]:not(.cammvas-summary-content) .canvas-node-content {
+	background-color: transparent;
+}
+
+.cammvas-mindmap .canvas-node[data-cammvas-depth="0"]:not(.cammvas-summary-content) .markdown-rendered,
+.cammvas-mindmap .canvas-node[data-cammvas-depth="0"]:not(.cammvas-summary-content) .markdown-rendered :is(h1, h2, h3, h4, h5, h6, strong, a) {
+	color: var(--text-on-accent);
+}
+
+.cammvas-mindmap .canvas-node[data-cammvas-depth="0"]:not(.cammvas-summary-content) .markdown-rendered {
+	font-size: 1.15em;
+	font-weight: 700;
+}
+
+.cammvas-mindmap .canvas-node[data-cammvas-depth="1"] > .canvas-node-container {
+	border-width: 2px;
+	border-radius: 12px;
+}
+
+.cammvas-mindmap .canvas-node[data-cammvas-depth="1"].is-themed .canvas-node-content {
+	background-color: color-mix(in srgb, var(--canvas-color) 14%, transparent);
+}
+
+.cammvas-mindmap .canvas-node[data-cammvas-depth="1"] .markdown-rendered {
+	font-weight: 600;
+}
+
+.cammvas-mindmap .canvas-node[data-cammvas-depth="2"] > .canvas-node-container {
+	border-radius: 8px;
+}
+
+.cammvas-mindmap .canvas-node[data-cammvas-depth="2"] .canvas-node-content {
+	background-color: transparent;
+}
+
+/* Mind map links carry hierarchy through width and need no arrowheads. */
+.cammvas-mindmap .canvas-path-end {
+	display: none;
+}
+
+.cammvas-mindmap g[data-cammvas-depth="1"] .canvas-display-path {
+	stroke-width: calc(4px * var(--zoom-multiplier, 1));
+}
+
+.cammvas-mindmap g[data-cammvas-depth="2"] .canvas-display-path {
+	stroke-width: calc(2px * var(--zoom-multiplier, 1));
 }
 
 .canvas-node.cammvas-reparent-drop-target {
@@ -275,11 +325,8 @@
 }
 
 .is-mobile .cammvas-canvas-collapse-button {
-	top: 0;
-	right: 0;
-	width: 44px;
-	height: 44px;
-	padding: 12px;
+	min-width: 28px;
+	height: 28px;
 	opacity: 1;
 	touch-action: manipulation;
 }

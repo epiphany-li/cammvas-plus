@@ -39,14 +39,15 @@ export function startEditingAtEnd(node: CanvasNode, selectAll = false): void {
 	if (!win) return;
 	let attempts = 0;
 	const placeCursor = (): void => {
-		const view = node.isEditing ? getNodeEditorView(node) : null;
-		if (!view) {
+		const editor = node.isEditing ? node.child?.editor : undefined;
+		if (!editor?.lastLine || !editor.getLine || !editor.setSelection) {
 			if (node.isEditing && ++attempts < 20) win.requestAnimationFrame(placeCursor);
 			return;
 		}
-		const end = view.state.doc.length;
-		view.dispatch({ selection: selectAll ? { anchor: 0, head: end } : { anchor: end } });
-		view.focus?.();
+		const lastLine = editor.lastLine();
+		const end = { line: lastLine, ch: editor.getLine(lastLine).length };
+		editor.setSelection(selectAll ? { line: 0, ch: 0 } : end, end);
+		editor.focus?.();
 	};
 	win.requestAnimationFrame(placeCursor);
 }
