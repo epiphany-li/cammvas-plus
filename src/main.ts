@@ -26,7 +26,7 @@ import {
 } from "./canvas/node-resize";
 import { createMindmapPdf } from "./export/pdf-export";
 import { PdfExportModal } from "./export/pdf-export-modal";
-import { registerBranchCollapse, BranchCollapseHandle } from "./canvas/branch-collapse";
+import { registerBranchCollapse, BranchCollapseHandle, clearCollapseVisuals } from "./canvas/branch-collapse";
 import { registerAutoResize, AutoResizeHandle, getEditorElements } from "./ui/auto-resize";
 import { findNavigableHistoryIndex } from "./ui/navigation-history";
 import { OutlineView, OUTLINE_VIEW_TYPE } from "./ui/outline-view";
@@ -41,6 +41,7 @@ import {
 	SummaryHandle,
 	getSummaryBracketIds,
 	getSummaryRecords,
+	clearSummaryVisuals,
 } from "./summary/summary-controller";
 import { tr } from "./i18n";
 
@@ -94,6 +95,10 @@ export default class CanvasMindMapPlugin extends Plugin {
 		selectOnly?: (item: CanvasNode | CanvasEdge) => void;
 		showCreationMenu?: (menu: Menu, pos: { x: number; y: number }) => void;
 	} = {};
+	/** Our wrapper functions installed on the intercepted canvas. */
+	private canvasReplacements: Partial<Record<"requestSave" | "createGroupNode" | "undo" | "redo" | "selectOnly" | "showCreationMenu", unknown>> = {};
+	/** Canvases that received mind map styling, cleaned up fully on unload. */
+	private decoratedCanvases = new Set<Canvas>();
 	/** Node ids at the last save, to notice nodes deleted natively (Delete key). */
 	private knownNodeIds: Set<string> | null = null;
 	private removalRelayoutPending = false;
@@ -320,6 +325,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 					const subtree = this.collectSubtreeNodes(canvas, node);
 					for (const item of subtree) setManualMinHeight(item, null);
 					this.resizeNodes(canvas, subtree);
+					canvas.requestSave();
 					this.layoutEngine.layout(canvas);
 					this.updateGroupBounds(canvas);
 				});
@@ -340,6 +346,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				this.preserveViewport(canvas, () => {
 					for (const item of canvas.nodes.values()) setManualMinHeight(item, null);
 					this.resizeNodes(canvas, Array.from(canvas.nodes.values()));
+					canvas.requestSave();
 					this.layoutEngine.layout(canvas);
 					this.updateGroupBounds(canvas);
 				});
@@ -640,6 +647,12 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 	onunload(): void {
 		this.unloaded = true;
+		for (const canvas of this.decoratedCanvases) {
+			canvas.wrapperEl?.removeClass("cammvas-mindmap");
+			clearCollapseVisuals(canvas);
+			clearSummaryVisuals(canvas);
+		}
+		this.decoratedCanvases.clear();
 		// Cancel all pending async operations first
 		this.cancelPendingAsync();
 		this.unwrapCanvasMethods();
@@ -803,11 +816,11 @@ export default class CanvasMindMapPlugin extends Plugin {
 			this.mobileEditingBarHandle = null;
 		}
 		if (this.branchCollapseHandle) {
-			this.branchCollapseHandle.cleanup();
+			this.branchCollapseHandle.cleanup(true);
 			this.branchCollapseHandle = null;
 		}
 		if (this.summaryHandle) {
-			this.summaryHandle.cleanup();
+			this.summaryHandle.cleanup(true);
 			this.summaryHandle = null;
 		}
 		this.keyboardHandler.unregisterArrowKeyNavigation();
@@ -1260,6 +1273,20 @@ export default class CanvasMindMapPlugin extends Plugin {
 				this.debouncedOutlineRefresh();
 			};
 		}
+		// Remember our wrappers so cleanup never clobbers one installed after us.
+		const installed = canvas as unknown as Record<string, unknown>;
+		this.canvasReplacements = {
+			requestSave: installed.requestSave,
+			createGroupNode: installed.createGroupNode,
+			undo: installed.undo,
+			redo: installed.redo,
+			selectOnly: installed.selectOnly,
+			showCreationMenu: installed.showCreationMenu,
+		};
+		for (const decorated of this.decoratedCanvases) {
+			if (!decorated.wrapperEl?.isConnected) this.decoratedCanvases.delete(decorated);
+		}
+		this.decoratedCanvases.add(canvas);
 		if (this.isMindmapCanvas(canvas)) {
 			this.showOutline(canvas);
 		} else {
@@ -1868,7 +1895,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		if (Platform.isMobile) {
 			const actionsBtn = controls.createEl('button', { attr: { type: 'button' } });
 			actionsBtn.addClass('cammvas-toggle-btn', 'cammvas-mobile-actions-btn', 'clickable-icon');
-			actionsBtn.setAttribute('aria-label', 'Mind map actions');
+			actionsBtn.setAttribute('aria-label', tr("Mind map actions", "导图操作"));
 			setIcon(actionsBtn, 'list-plus');
 			this.registerDomEvent(actionsBtn, 'click', (event) => {
 				event.stopPropagation();
@@ -2241,31 +2268,28 @@ export default class CanvasMindMapPlugin extends Plugin {
 		this.pendingObservers.clear();
 	}
 
-	/** Restore wrapped canvas methods to originals. */
+	/** Restore wrapped canvas methods to originals, unless someone wrapped them after us. */
 	private unwrapCanvasMethods(): void {
-		if (this.interceptedCanvas) {
-			if (this.origCanvasMethods.requestSave) {
-				this.interceptedCanvas.requestSave = this.origCanvasMethods.requestSave;
-			}
-			if (this.origCanvasMethods.createGroupNode) {
-				this.interceptedCanvas.createGroupNode = this.origCanvasMethods.createGroupNode;
-			}
-			if (this.origCanvasMethods.undo) {
-				this.interceptedCanvas.undo = this.origCanvasMethods.undo;
-			}
-			if (this.origCanvasMethods.redo) {
-				this.interceptedCanvas.redo = this.origCanvasMethods.redo;
-			}
-			if (this.origCanvasMethods.selectOnly) {
-				this.interceptedCanvas.selectOnly = this.origCanvasMethods.selectOnly;
-			}
-			if (this.origCanvasMethods.showCreationMenu) {
-				this.interceptedCanvas.showCreationMenu = this.origCanvasMethods.showCreationMenu;
-			}
-			this.interceptedCanvas.wrapperEl.removeClass("cammvas-mindmap");
+		const canvas = this.interceptedCanvas;
+		if (canvas) {
+			const originals = this.origCanvasMethods;
+			const ours = this.canvasReplacements;
+			const restore = <K extends keyof typeof originals>(key: K): void => {
+				const original = originals[key];
+				if (original && (canvas as unknown as Record<string, unknown>)[key] === ours[key]) {
+					(canvas as unknown as Record<string, unknown>)[key] = original;
+				}
+			};
+			restore("requestSave");
+			restore("createGroupNode");
+			restore("undo");
+			restore("redo");
+			restore("selectOnly");
+			restore("showCreationMenu");
 		}
 		this.interceptedCanvas = null;
 		this.origCanvasMethods = {};
+		this.canvasReplacements = {};
 	}
 
 	async loadSettings(): Promise<void> {

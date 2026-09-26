@@ -69,7 +69,7 @@ describe("validateSummarySelection", () => {
 
 	it("rejects gaps between selected siblings", () => {
 		const result = validateSummarySelection(makeGraph(), ["a", "c"], []);
-		expect(result).toEqual({ ok: false, error: "请选择连续相邻的兄弟节点" });
+		expect(result).toEqual({ ok: false, error: "not-consecutive" });
 	});
 
 	it("rejects nodes with different parents", () => {
@@ -81,12 +81,12 @@ describe("validateSummarySelection", () => {
 		graph.nodes.set("l2", rect("l2", -400, 200));
 		graph.edges.push({ from: "root", to: "l2" });
 		const result = validateSummarySelection(graph, ["l", "a"], []);
-		expect(result).toEqual({ ok: false, error: "选中节点必须位于父节点的同一侧" });
+		expect(result).toEqual({ ok: false, error: "different-sides" });
 	});
 
 	it("rejects nodes already covered by another summary", () => {
 		const result = validateSummarySelection(makeGraph(), ["c", "d"], [record()]);
-		expect(result).toEqual({ ok: false, error: "有节点已经属于另一个概要" });
+		expect(result).toEqual({ ok: false, error: "already-summarized" });
 	});
 });
 

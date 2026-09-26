@@ -514,7 +514,7 @@ export class OutlineView extends ItemView {
 			cls: "tree-item-inner",
 			text: getNodeTitle(node.canvasNode, this.nodeDataById.get(node.canvasNode.id)),
 		});
-		if (isSummary) inner.prepend(inner.createSpan({ cls: "cammvas-outline-summary-tag", text: "概要" }));
+		if (isSummary) inner.prepend(inner.createSpan({ cls: "cammvas-outline-summary-tag", text: tr("Summary", "概要") }));
 		this.allItemEls.set(node.canvasNode.id, self);
 
 		self.addEventListener("click", () => this.navigateToNode(canvas, node.canvasNode));

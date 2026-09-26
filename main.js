@@ -4325,6 +4325,23 @@ function writeCanvasDataKey(canvas, key, value) {
   canvas.data = { ...(_a = canvas.data) != null ? _a : {}, [key]: value };
   canvas.requestSave();
 }
+function toggleEdgeClass(edge, className, on) {
+  var _a, _b, _c, _d, _e;
+  for (const el of [
+    edge.lineGroupEl,
+    edge.lineEl,
+    edge.lineEndGroupEl,
+    edge.startGroupEl,
+    edge.endGroupEl,
+    (_a = edge.fromLineEnd) == null ? void 0 : _a.el,
+    (_b = edge.toLineEnd) == null ? void 0 : _b.el,
+    (_c = edge.labelElement) == null ? void 0 : _c.wrapperEl,
+    (_d = edge.path) == null ? void 0 : _d.display,
+    (_e = edge.path) == null ? void 0 : _e.interaction
+  ]) {
+    el == null ? void 0 : el.classList.toggle(className, on);
+  }
+}
 function getNodeEditorView(node) {
   var _a, _b, _c, _d;
   const iframe = (_a = node.contentEl) == null ? void 0 : _a.querySelector("iframe");
@@ -4606,6 +4623,28 @@ function collectCollapsedDescendantIds(collapsedIds, getChildren) {
   }
   return hidden;
 }
+function collectHiddenIds(collapsedIds, allIds, getChildren) {
+  const collapsed = new Set(collapsedIds);
+  const candidates = collectCollapsedDescendantIds(collapsed, getChildren);
+  if (candidates.size === 0) return candidates;
+  const ids = Array.from(allIds);
+  const hasParent = /* @__PURE__ */ new Set();
+  for (const id of ids) {
+    for (const child of getChildren(id)) hasParent.add(child);
+  }
+  const queue = ids.filter((id) => !hasParent.has(id));
+  const reachable = new Set(queue);
+  while (queue.length > 0) {
+    const id = queue.shift();
+    if (collapsed.has(id)) continue;
+    for (const child of getChildren(id)) {
+      if (reachable.has(child)) continue;
+      reachable.add(child);
+      queue.push(child);
+    }
+  }
+  return new Set([...candidates].filter((id) => !reachable.has(id)));
+}
 
 // src/mindmap/tree-model.ts
 function buildForest(canvas, respectCollapsed = false) {
@@ -4627,8 +4666,9 @@ function buildForest(canvas, respectCollapsed = false) {
       children.push(edge.to.node.id);
       childrenById.set(edge.from.node.id, children);
     }
-    const hidden = collectCollapsedDescendantIds(
+    const hidden = collectHiddenIds(
       (_b = canvas.getData().mindmapCollapsed) != null ? _b : [],
+      visibleNodeIds,
       (id) => {
         var _a2;
         return (_a2 = childrenById.get(id)) != null ? _a2 : [];
@@ -5648,10 +5688,45 @@ var import_obsidian3 = require("obsidian");
 
 // src/canvas/branch-collapse.ts
 var import_obsidian2 = require("obsidian");
+
+// src/i18n.ts
+var obsidian = __toESM(require("obsidian"));
+var cachedIsChinese = null;
+function isChineseUI() {
+  if (cachedIsChinese !== null) return cachedIsChinese;
+  const getLanguage2 = obsidian.getLanguage;
+  const language = typeof getLanguage2 === "function" ? getLanguage2() : "en";
+  cachedIsChinese = /^zh/i.test(language);
+  return cachedIsChinese;
+}
+function tr(en, zh) {
+  return isChineseUI() ? zh : en;
+}
+
+// src/canvas/branch-collapse.ts
 var BUTTON_CLASS = "cammvas-canvas-collapse-button";
 var COLLAPSED_HIDDEN_CLASS = "cammvas-canvas-branch-hidden";
 var REVEALED_CLASS = "cammvas-branch-revealed";
 var REVEAL_MS = 400;
+function clearCollapseVisuals(canvas) {
+  var _a;
+  for (const node of canvas.nodes.values()) {
+    node.nodeEl.removeClass(COLLAPSED_HIDDEN_CLASS);
+    (_a = node.nodeEl.querySelector(`:scope > .${BUTTON_CLASS}`)) == null ? void 0 : _a.remove();
+  }
+  for (const edge of canvas.edges.values()) toggleEdgeClass(edge, COLLAPSED_HIDDEN_CLASS, false);
+}
+function countDescendants(canvas) {
+  const counts = /* @__PURE__ */ new Map();
+  const visit = (treeNode) => {
+    let total = 0;
+    for (const child of treeNode.children) total += 1 + visit(child);
+    counts.set(treeNode.canvasNode.id, total);
+    return total;
+  };
+  for (const root of buildForest(canvas)) visit(root);
+  return counts;
+}
 function computeDepths(canvas, childIds) {
   const hasParent = /* @__PURE__ */ new Set();
   for (const edge of canvas.edges.values()) hasParent.add(edge.to.node.id);
@@ -5719,32 +5794,23 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
     }
     button.setAttribute(
       "aria-label",
-      `${collapsed ? "Expand" : "Collapse"} branch (${descendantCount} descendant${descendantCount === 1 ? "" : "s"})`
+      collapsed ? tr(`Expand branch (${descendantCount} hidden)`, `\u5C55\u5F00\u5206\u652F\uFF08\u9690\u85CF\u4E86 ${descendantCount} \u4E2A\u8282\u70B9\uFF09`) : tr(`Collapse branch (${descendantCount} nodes)`, `\u6298\u53E0\u5206\u652F\uFF08${descendantCount} \u4E2A\u8282\u70B9\uFF09`)
     );
     button.dataset.descendantCount = String(descendantCount);
     button.dataset.side = side;
   };
   const setEdgeHidden = (edge, hidden) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
-    (_a = edge.lineGroupEl) == null ? void 0 : _a.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_b = edge.lineEl) == null ? void 0 : _b.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_c = edge.lineEndGroupEl) == null ? void 0 : _c.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_d = edge.startGroupEl) == null ? void 0 : _d.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_e = edge.endGroupEl) == null ? void 0 : _e.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_g = (_f = edge.fromLineEnd) == null ? void 0 : _f.el) == null ? void 0 : _g.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_i = (_h = edge.toLineEnd) == null ? void 0 : _h.el) == null ? void 0 : _i.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_k = (_j = edge.labelElement) == null ? void 0 : _j.wrapperEl) == null ? void 0 : _k.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_m = (_l = edge.path) == null ? void 0 : _l.display) == null ? void 0 : _m.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-    (_o = (_n = edge.path) == null ? void 0 : _n.interaction) == null ? void 0 : _o.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
+    toggleEdgeClass(edge, COLLAPSED_HIDDEN_CLASS, hidden);
   };
   const refresh = () => {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     if (disposed) return;
     observer.disconnect();
     canvasApi.invalidateEdgeIndex();
     const collapsedIds = new Set((_a = canvas.getData().mindmapCollapsed) != null ? _a : []);
     const childIds = (nodeId) => canvasApi.getOutgoingEdges(canvas, nodeId).map((edge) => edge.to.node.id);
-    const hiddenIds = collectCollapsedDescendantIds(collapsedIds, childIds);
+    const hiddenIds = collectHiddenIds(collapsedIds, canvas.nodes.keys(), childIds);
+    const descendantCounts = countDescendants(canvas);
     const revealed = new Set([...previousHidden].filter((id) => !hiddenIds.has(id) && canvas.nodes.has(id)));
     previousHidden = hiddenIds;
     const revealedEls = [];
@@ -5766,13 +5832,17 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
         existing == null ? void 0 : existing.remove();
         continue;
       }
-      const descendants = collectCollapsedDescendantIds([node.id], childIds);
       const nodeCx = node.x + node.width / 2;
       const childCx = children.reduce((sum2, id) => {
         const child = canvas.nodes.get(id);
         return sum2 + (child ? child.x + child.width / 2 : nodeCx);
       }, 0) / children.length;
-      syncButton(node, collapsedIds.has(node.id), descendants.size, childCx < nodeCx ? "left" : "right");
+      syncButton(
+        node,
+        collapsedIds.has(node.id),
+        (_b = descendantCounts.get(node.id)) != null ? _b : children.length,
+        childCx < nodeCx ? "left" : "right"
+      );
     }
     for (const edge of canvas.edges.values()) {
       setEdgeHidden(
@@ -5781,8 +5851,8 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
       );
       if (revealed.has(edge.to.node.id) && edge.lineGroupEl) revealedEls.push(edge.lineGroupEl);
       const depth = depths.get(edge.to.node.id);
-      if (depth === void 0) (_b = edge.lineGroupEl) == null ? void 0 : _b.removeAttribute("data-cammvas-depth");
-      else (_c = edge.lineGroupEl) == null ? void 0 : _c.setAttribute("data-cammvas-depth", String(Math.min(depth, 2)));
+      if (depth === void 0) (_c = edge.lineGroupEl) == null ? void 0 : _c.removeAttribute("data-cammvas-depth");
+      else (_d = edge.lineGroupEl) == null ? void 0 : _d.setAttribute("data-cammvas-depth", String(Math.min(depth, 2)));
     }
     if (revealedEls.length > 0) {
       for (const el of revealedEls) el.classList.add(REVEALED_CLASS);
@@ -5792,6 +5862,7 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
     }
     observer.observe(canvas.wrapperEl, { childList: true, subtree: true });
   };
+  for (const stale of Array.from(canvas.wrapperEl.querySelectorAll(`.${BUTTON_CLASS}`))) stale.remove();
   const Observer = Reflect.get(win, "MutationObserver");
   observer = new Observer(scheduleRefresh);
   observer.observe(canvas.wrapperEl, { childList: true, subtree: true });
@@ -5800,16 +5871,11 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
     refresh: scheduleRefresh,
     toggle,
     canToggle: (nodeId) => canvasApi.getOutgoingEdges(canvas, nodeId).length > 0,
-    cleanup: () => {
-      var _a;
+    cleanup: (keepVisuals = false) => {
       disposed = true;
       observer.disconnect();
       if (refreshRaf !== null) win.cancelAnimationFrame(refreshRaf);
-      for (const node of canvas.nodes.values()) {
-        node.nodeEl.removeClass(COLLAPSED_HIDDEN_CLASS);
-        (_a = node.nodeEl.querySelector(`:scope > .${BUTTON_CLASS}`)) == null ? void 0 : _a.remove();
-      }
-      for (const edge of canvas.edges.values()) setEdgeHidden(edge, false);
+      if (!keepVisuals) clearCollapseVisuals(canvas);
     }
   };
 }
@@ -5856,20 +5922,6 @@ function focusCanvasKeyboardTarget(target) {
   } else {
     target.setAttribute("tabindex", previousTabIndex);
   }
-}
-
-// src/i18n.ts
-var obsidian = __toESM(require("obsidian"));
-var cachedIsChinese = null;
-function isChineseUI() {
-  if (cachedIsChinese !== null) return cachedIsChinese;
-  const getLanguage2 = obsidian.getLanguage;
-  const language = typeof getLanguage2 === "function" ? getLanguage2() : "en";
-  cachedIsChinese = /^zh/i.test(language);
-  return cachedIsChinese;
-}
-function tr(en, zh) {
-  return isChineseUI() ? zh : en;
 }
 
 // src/ui/keyboard-handler.ts
@@ -22706,35 +22758,35 @@ function validateSummarySelection(graph, selectedIds, records) {
   var _a;
   const excluded = /* @__PURE__ */ new Set([...getBracketIds(records), ...getSummaryNodeIds(records)]);
   const selected = [...new Set(selectedIds)].filter((id) => graph.nodes.has(id) && !excluded.has(id));
-  if (selected.length < 2) return { ok: false, error: "\u8BF7\u81F3\u5C11\u9009\u62E9\u4E24\u4E2A\u76F8\u90BB\u7684\u5144\u5F1F\u8282\u70B9" };
+  if (selected.length < 2) return { ok: false, error: "too-few" };
   const parents = parentsIndex(graph.edges);
   const parentIds = selected.map((id) => {
     var _a2;
     return (_a2 = parents.get(id)) != null ? _a2 : [];
   });
   if (parentIds.some((list) => list.length !== 1)) {
-    return { ok: false, error: "\u6BCF\u4E2A\u9009\u4E2D\u8282\u70B9\u90FD\u5FC5\u987B\u6070\u597D\u6709\u4E00\u4E2A\u7236\u8282\u70B9" };
+    return { ok: false, error: "parent-count" };
   }
   const parentId = parentIds[0][0];
   if (!parentIds.every((list) => list[0] === parentId)) {
-    return { ok: false, error: "\u9009\u4E2D\u8282\u70B9\u5FC5\u987B\u5C5E\u4E8E\u540C\u4E00\u4E2A\u7236\u8282\u70B9" };
+    return { ok: false, error: "different-parents" };
   }
   const parent = graph.nodes.get(parentId);
-  if (!parent) return { ok: false, error: "\u627E\u4E0D\u5230\u5171\u540C\u7684\u7236\u8282\u70B9" };
+  if (!parent) return { ok: false, error: "missing-parent" };
   const sideOf = (id) => centerX(graph.nodes.get(id)) >= centerX(parent) ? "right" : "left";
   const side = sideOf(selected[0]);
   if (!selected.every((id) => sideOf(id) === side)) {
-    return { ok: false, error: "\u9009\u4E2D\u8282\u70B9\u5FC5\u987B\u4F4D\u4E8E\u7236\u8282\u70B9\u7684\u540C\u4E00\u4FA7" };
+    return { ok: false, error: "different-sides" };
   }
   const siblings = ((_a = childrenIndex(graph.edges).get(parentId)) != null ? _a : []).filter((id) => graph.nodes.has(id) && sideOf(id) === side).sort((a, b) => graph.nodes.get(a).y - graph.nodes.get(b).y);
   const selectedSet = new Set(selected);
   const indices = siblings.map((id, index) => selectedSet.has(id) ? index : -1).filter((index) => index >= 0);
   if (indices.length !== selected.length || Math.max(...indices) - Math.min(...indices) + 1 !== indices.length) {
-    return { ok: false, error: "\u8BF7\u9009\u62E9\u8FDE\u7EED\u76F8\u90BB\u7684\u5144\u5F1F\u8282\u70B9" };
+    return { ok: false, error: "not-consecutive" };
   }
   const used = new Set(records.flatMap((record) => record.memberNodeIds));
   if (selected.some((id) => used.has(id))) {
-    return { ok: false, error: "\u6709\u8282\u70B9\u5DF2\u7ECF\u5C5E\u4E8E\u53E6\u4E00\u4E2A\u6982\u8981" };
+    return { ok: false, error: "already-summarized" };
   }
   return {
     ok: true,
@@ -23437,6 +23489,10 @@ var import_obsidian7 = require("obsidian");
 var SUMMARY_BRACKET_CLASS = "cammvas-summary-bracket";
 var SUMMARY_CONTENT_CLASS = "cammvas-summary-content";
 var SUMMARY_HIDDEN_CLASS = "cammvas-summary-hidden";
+function clearSummaryVisuals(canvas) {
+  for (const node of canvas.nodes.values()) node.nodeEl.removeClass(SUMMARY_HIDDEN_CLASS);
+  for (const edge of canvas.edges.values()) toggleEdgeClass(edge, SUMMARY_HIDDEN_CLASS, false);
+}
 function getSummaryRecords(canvas) {
   var _a;
   return readSummaryRecords((_a = canvas.data) != null ? _a : {});
@@ -23444,6 +23500,15 @@ function getSummaryRecords(canvas) {
 function getSummaryBracketIds(canvas) {
   return new Set(getSummaryRecords(canvas).map((record) => record.bracketNodeId));
 }
+var SELECTION_ERRORS = {
+  "too-few": () => tr("Select at least two adjacent sibling nodes", "\u8BF7\u81F3\u5C11\u9009\u62E9\u4E24\u4E2A\u76F8\u90BB\u7684\u5144\u5F1F\u8282\u70B9"),
+  "parent-count": () => tr("Each selected node must have exactly one parent", "\u6BCF\u4E2A\u9009\u4E2D\u8282\u70B9\u90FD\u5FC5\u987B\u6070\u597D\u6709\u4E00\u4E2A\u7236\u8282\u70B9"),
+  "different-parents": () => tr("Selected nodes must share the same parent", "\u9009\u4E2D\u8282\u70B9\u5FC5\u987B\u5C5E\u4E8E\u540C\u4E00\u4E2A\u7236\u8282\u70B9"),
+  "missing-parent": () => tr("The common parent node was not found", "\u627E\u4E0D\u5230\u5171\u540C\u7684\u7236\u8282\u70B9"),
+  "different-sides": () => tr("Selected nodes must be on the same side of their parent", "\u9009\u4E2D\u8282\u70B9\u5FC5\u987B\u4F4D\u4E8E\u7236\u8282\u70B9\u7684\u540C\u4E00\u4FA7"),
+  "not-consecutive": () => tr("Select consecutive sibling nodes", "\u8BF7\u9009\u62E9\u8FDE\u7EED\u76F8\u90BB\u7684\u5144\u5F1F\u8282\u70B9"),
+  "already-summarized": () => tr("A selected node already belongs to another summary", "\u6709\u8282\u70B9\u5DF2\u7ECF\u5C5E\u4E8E\u53E6\u4E00\u4E2A\u6982\u8981")
+};
 function makeId() {
   return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
 }
@@ -23472,27 +23537,13 @@ function registerSummaries(canvas, onLayoutNeeded) {
       children.set(edge.from, list);
     }
     const collapsed = (_b = canvas.getData().mindmapCollapsed) != null ? _b : [];
-    return collectCollapsedDescendantIds(collapsed, (id) => {
+    return collectHiddenIds(collapsed, canvas.nodes.keys(), (id) => {
       var _a2;
       return (_a2 = children.get(id)) != null ? _a2 : [];
     });
   };
   const setEdgeHidden = (edge, hidden) => {
-    var _a, _b, _c, _d, _e;
-    for (const el of [
-      edge.lineGroupEl,
-      edge.lineEl,
-      edge.lineEndGroupEl,
-      edge.startGroupEl,
-      edge.endGroupEl,
-      (_a = edge.fromLineEnd) == null ? void 0 : _a.el,
-      (_b = edge.toLineEnd) == null ? void 0 : _b.el,
-      (_c = edge.labelElement) == null ? void 0 : _c.wrapperEl,
-      (_d = edge.path) == null ? void 0 : _d.display,
-      (_e = edge.path) == null ? void 0 : _e.interaction
-    ]) {
-      el == null ? void 0 : el.classList.toggle(SUMMARY_HIDDEN_CLASS, hidden);
-    }
+    toggleEdgeClass(edge, SUMMARY_HIDDEN_CLASS, hidden);
   };
   const updateConnector = (bracket, summaryNode, side) => {
     let svg = bracket.nodeEl.querySelector(":scope > svg.cammvas-summary-brace");
@@ -23649,7 +23700,7 @@ function registerSummaries(canvas, onLayoutNeeded) {
     const g = graph();
     const validation = validateSummarySelection(g, selectedIds, records);
     if (!validation.ok) {
-      new import_obsidian7.Notice(validation.error);
+      new import_obsidian7.Notice(SELECTION_ERRORS[validation.error]());
       return false;
     }
     const covered = collectCoveredIds(g.edges, validation.memberIds).map((id) => canvas.nodes.get(id)).filter((node) => !!node);
@@ -23768,14 +23819,13 @@ function registerSummaries(canvas, onLayoutNeeded) {
     removeBracket,
     findByContentNode,
     isSummaryNode: (nodeId) => getSummaryRecords(canvas).some((record) => record.summaryNodeId === nodeId),
-    cleanup: () => {
+    cleanup: (keepVisuals = false) => {
       disposed = true;
       if (scheduled !== null) win.cancelAnimationFrame(scheduled);
       canvas.wrapperEl.removeEventListener("pointerdown", onPointerDown, true);
       win.removeEventListener("pointerup", onPointerUp, true);
       win.removeEventListener("pointercancel", onPointerCancel, true);
-      for (const node of canvas.nodes.values()) node.nodeEl.removeClass(SUMMARY_HIDDEN_CLASS);
-      for (const edge of canvas.edges.values()) setEdgeHidden(edge, false);
+      if (!keepVisuals) clearSummaryVisuals(canvas);
     }
   };
 }
@@ -24218,7 +24268,7 @@ var OutlineView = class extends import_obsidian9.ItemView {
       cls: "tree-item-inner",
       text: getNodeTitle(node.canvasNode, this.nodeDataById.get(node.canvasNode.id))
     });
-    if (isSummary) inner.prepend(inner.createSpan({ cls: "cammvas-outline-summary-tag", text: "\u6982\u8981" }));
+    if (isSummary) inner.prepend(inner.createSpan({ cls: "cammvas-outline-summary-tag", text: tr("Summary", "\u6982\u8981") }));
     this.allItemEls.set(node.canvasNode.id, self);
     self.addEventListener("click", () => this.navigateToNode(canvas, node.canvasNode));
     self.addEventListener("contextmenu", (e) => {
@@ -24983,6 +25033,10 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
     this.editExitGeneration = 0;
     /** Original canvas methods for unwrapping on cleanup. */
     this.origCanvasMethods = {};
+    /** Our wrapper functions installed on the intercepted canvas. */
+    this.canvasReplacements = {};
+    /** Canvases that received mind map styling, cleaned up fully on unload. */
+    this.decoratedCanvases = /* @__PURE__ */ new Set();
     /** Node ids at the last save, to notice nodes deleted natively (Delete key). */
     this.knownNodeIds = null;
     this.removalRelayoutPending = false;
@@ -25187,6 +25241,7 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
           const subtree = this.collectSubtreeNodes(canvas, node);
           for (const item of subtree) setManualMinHeight(item, null);
           this.resizeNodes(canvas, subtree);
+          canvas.requestSave();
           this.layoutEngine.layout(canvas);
           this.updateGroupBounds(canvas);
         });
@@ -25205,6 +25260,7 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
         this.preserveViewport(canvas, () => {
           for (const item of canvas.nodes.values()) setManualMinHeight(item, null);
           this.resizeNodes(canvas, Array.from(canvas.nodes.values()));
+          canvas.requestSave();
           this.layoutEngine.layout(canvas);
           this.updateGroupBounds(canvas);
         });
@@ -25441,7 +25497,14 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
     return null;
   }
   onunload() {
+    var _a;
     this.unloaded = true;
+    for (const canvas of this.decoratedCanvases) {
+      (_a = canvas.wrapperEl) == null ? void 0 : _a.removeClass("cammvas-mindmap");
+      clearCollapseVisuals(canvas);
+      clearSummaryVisuals(canvas);
+    }
+    this.decoratedCanvases.clear();
     this.cancelPendingAsync();
     this.unwrapCanvasMethods();
     if (this.cleanupClickHandler) {
@@ -25539,7 +25602,7 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
    * Called when the active leaf changes — set up canvas-specific UI.
    */
   onLeafChange(leaf) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     if (((_a = leaf == null ? void 0 : leaf.view) == null ? void 0 : _a.getViewType()) === OUTLINE_VIEW_TYPE) return;
     const root = leaf == null ? void 0 : leaf.getRoot();
     if (root && root !== this.app.workspace.rootSplit) return;
@@ -25598,11 +25661,11 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
       this.mobileEditingBarHandle = null;
     }
     if (this.branchCollapseHandle) {
-      this.branchCollapseHandle.cleanup();
+      this.branchCollapseHandle.cleanup(true);
       this.branchCollapseHandle = null;
     }
     if (this.summaryHandle) {
-      this.summaryHandle.cleanup();
+      this.summaryHandle.cleanup(true);
       this.summaryHandle = null;
     }
     this.keyboardHandler.unregisterArrowKeyNavigation();
@@ -25971,6 +26034,19 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
         this.debouncedOutlineRefresh();
       };
     }
+    const installed = canvas;
+    this.canvasReplacements = {
+      requestSave: installed.requestSave,
+      createGroupNode: installed.createGroupNode,
+      undo: installed.undo,
+      redo: installed.redo,
+      selectOnly: installed.selectOnly,
+      showCreationMenu: installed.showCreationMenu
+    };
+    for (const decorated of this.decoratedCanvases) {
+      if (!((_e = decorated.wrapperEl) == null ? void 0 : _e.isConnected)) this.decoratedCanvases.delete(decorated);
+    }
+    this.decoratedCanvases.add(canvas);
     if (this.isMindmapCanvas(canvas)) {
       this.showOutline(canvas);
     } else {
@@ -26514,7 +26590,7 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
     if (import_obsidian11.Platform.isMobile) {
       const actionsBtn = controls.createEl("button", { attr: { type: "button" } });
       actionsBtn.addClass("cammvas-toggle-btn", "cammvas-mobile-actions-btn", "clickable-icon");
-      actionsBtn.setAttribute("aria-label", "Mind map actions");
+      actionsBtn.setAttribute("aria-label", tr("Mind map actions", "\u5BFC\u56FE\u64CD\u4F5C"));
       (0, import_obsidian11.setIcon)(actionsBtn, "list-plus");
       this.registerDomEvent(actionsBtn, "click", (event) => {
         event.stopPropagation();
@@ -26793,31 +26869,28 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
     for (const obs of this.pendingObservers) obs.disconnect();
     this.pendingObservers.clear();
   }
-  /** Restore wrapped canvas methods to originals. */
+  /** Restore wrapped canvas methods to originals, unless someone wrapped them after us. */
   unwrapCanvasMethods() {
-    if (this.interceptedCanvas) {
-      if (this.origCanvasMethods.requestSave) {
-        this.interceptedCanvas.requestSave = this.origCanvasMethods.requestSave;
-      }
-      if (this.origCanvasMethods.createGroupNode) {
-        this.interceptedCanvas.createGroupNode = this.origCanvasMethods.createGroupNode;
-      }
-      if (this.origCanvasMethods.undo) {
-        this.interceptedCanvas.undo = this.origCanvasMethods.undo;
-      }
-      if (this.origCanvasMethods.redo) {
-        this.interceptedCanvas.redo = this.origCanvasMethods.redo;
-      }
-      if (this.origCanvasMethods.selectOnly) {
-        this.interceptedCanvas.selectOnly = this.origCanvasMethods.selectOnly;
-      }
-      if (this.origCanvasMethods.showCreationMenu) {
-        this.interceptedCanvas.showCreationMenu = this.origCanvasMethods.showCreationMenu;
-      }
-      this.interceptedCanvas.wrapperEl.removeClass("cammvas-mindmap");
+    const canvas = this.interceptedCanvas;
+    if (canvas) {
+      const originals = this.origCanvasMethods;
+      const ours = this.canvasReplacements;
+      const restore = (key) => {
+        const original = originals[key];
+        if (original && canvas[key] === ours[key]) {
+          canvas[key] = original;
+        }
+      };
+      restore("requestSave");
+      restore("createGroupNode");
+      restore("undo");
+      restore("redo");
+      restore("selectOnly");
+      restore("showCreationMenu");
     }
     this.interceptedCanvas = null;
     this.origCanvasMethods = {};
+    this.canvasReplacements = {};
   }
   async loadSettings() {
     const data = await this.loadData();

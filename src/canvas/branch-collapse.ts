@@ -1,7 +1,10 @@
 import { setIcon } from "obsidian";
 import type { Canvas, CanvasEdge, CanvasNode } from "../types/canvas-internal";
 import { CanvasAPI, writeCanvasDataKey } from "./canvas-api";
-import { collectCollapsedDescendantIds } from "./branch-collapse-state";
+import { collectHiddenIds } from "./branch-collapse-state";
+import { buildForest, TreeNode } from "../mindmap/tree-model";
+import { toggleEdgeClass } from "./canvas-api";
+import { tr } from "../i18n";
 
 const BUTTON_CLASS = "cammvas-canvas-collapse-button";
 export const COLLAPSED_HIDDEN_CLASS = "cammvas-canvas-branch-hidden";
@@ -15,7 +18,36 @@ export interface BranchCollapseHandle {
 	toggle: (nodeId: string) => void;
 	/** Whether the node has children that can be collapsed. */
 	canToggle: (nodeId: string) => boolean;
-	cleanup: () => void;
+	/**
+	 * Stop reacting to the canvas. With keepVisuals, collapsed branches stay
+	 * hidden (e.g. an inactive canvas still visible in a split pane).
+	 */
+	cleanup: (keepVisuals?: boolean) => void;
+}
+
+/** Remove every collapse button and hidden marker from a canvas. */
+export function clearCollapseVisuals(canvas: Canvas): void {
+	for (const node of canvas.nodes.values()) {
+		node.nodeEl.removeClass(COLLAPSED_HIDDEN_CLASS);
+		node.nodeEl.querySelector<HTMLElement>(`:scope > .${BUTTON_CLASS}`)?.remove();
+	}
+	for (const edge of canvas.edges.values()) toggleEdgeClass(edge, COLLAPSED_HIDDEN_CLASS, false);
+}
+
+/**
+ * Descendant count of every node in one post-order pass over the normalized
+ * forest (each node counted once even with cycles or several parents).
+ */
+function countDescendants(canvas: Canvas): Map<string, number> {
+	const counts = new Map<string, number>();
+	const visit = (treeNode: TreeNode): number => {
+		let total = 0;
+		for (const child of treeNode.children) total += 1 + visit(child);
+		counts.set(treeNode.canvasNode.id, total);
+		return total;
+	};
+	for (const root of buildForest(canvas)) visit(root);
+	return counts;
 }
 
 /**
@@ -103,7 +135,9 @@ export function registerBranchCollapse(
 		}
 		button.setAttribute(
 			"aria-label",
-			`${collapsed ? "Expand" : "Collapse"} branch (${descendantCount} descendant${descendantCount === 1 ? "" : "s"})`
+			collapsed
+				? tr(`Expand branch (${descendantCount} hidden)`, `展开分支（隐藏了 ${descendantCount} 个节点）`)
+				: tr(`Collapse branch (${descendantCount} nodes)`, `折叠分支（${descendantCount} 个节点）`)
 		);
 		button.dataset.descendantCount = String(descendantCount);
 		// Sit on the side the branch grows toward, where the connecting line leaves.
@@ -111,16 +145,7 @@ export function registerBranchCollapse(
 	};
 
 	const setEdgeHidden = (edge: CanvasEdge, hidden: boolean): void => {
-		edge.lineGroupEl?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.lineEl?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.lineEndGroupEl?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.startGroupEl?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.endGroupEl?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.fromLineEnd?.el?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.toLineEnd?.el?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.labelElement?.wrapperEl?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.path?.display?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
-		edge.path?.interaction?.toggleClass(COLLAPSED_HIDDEN_CLASS, hidden);
+		toggleEdgeClass(edge, COLLAPSED_HIDDEN_CLASS, hidden);
 	};
 
 	const refresh = (): void => {
@@ -131,7 +156,8 @@ export function registerBranchCollapse(
 		const collapsedIds = new Set(canvas.getData().mindmapCollapsed ?? []);
 		const childIds = (nodeId: string): string[] =>
 			canvasApi.getOutgoingEdges(canvas, nodeId).map((edge) => edge.to.node.id);
-		const hiddenIds = collectCollapsedDescendantIds(collapsedIds, childIds);
+		const hiddenIds = collectHiddenIds(collapsedIds, canvas.nodes.keys(), childIds);
+		const descendantCounts = countDescendants(canvas);
 		const revealed = new Set([...previousHidden].filter((id) => !hiddenIds.has(id) && canvas.nodes.has(id)));
 		previousHidden = hiddenIds;
 		const revealedEls: Element[] = [];
@@ -154,13 +180,17 @@ export function registerBranchCollapse(
 				existing?.remove();
 				continue;
 			}
-			const descendants = collectCollapsedDescendantIds([node.id], childIds);
 			const nodeCx = node.x + node.width / 2;
 			const childCx = children.reduce((sum, id) => {
 				const child = canvas.nodes.get(id);
 				return sum + (child ? child.x + child.width / 2 : nodeCx);
 			}, 0) / children.length;
-			syncButton(node, collapsedIds.has(node.id), descendants.size, childCx < nodeCx ? "left" : "right");
+			syncButton(
+				node,
+				collapsedIds.has(node.id),
+				descendantCounts.get(node.id) ?? children.length,
+				childCx < nodeCx ? "left" : "right"
+			);
 		}
 
 		for (const edge of canvas.edges.values()) {
@@ -184,6 +214,8 @@ export function registerBranchCollapse(
 		observer.observe(canvas.wrapperEl, { childList: true, subtree: true });
 	};
 
+	// Buttons left by a previous session hold that session's click handlers.
+	for (const stale of Array.from(canvas.wrapperEl.querySelectorAll(`.${BUTTON_CLASS}`))) stale.remove();
 	const Observer = Reflect.get(win, "MutationObserver") as typeof MutationObserver;
 	observer = new Observer(scheduleRefresh);
 	observer.observe(canvas.wrapperEl, { childList: true, subtree: true });
@@ -193,15 +225,11 @@ export function registerBranchCollapse(
 		refresh: scheduleRefresh,
 		toggle,
 		canToggle: (nodeId) => canvasApi.getOutgoingEdges(canvas, nodeId).length > 0,
-		cleanup: () => {
+		cleanup: (keepVisuals = false) => {
 			disposed = true;
 			observer.disconnect();
 			if (refreshRaf !== null) win.cancelAnimationFrame(refreshRaf);
-			for (const node of canvas.nodes.values()) {
-				node.nodeEl.removeClass(COLLAPSED_HIDDEN_CLASS);
-				node.nodeEl.querySelector<HTMLElement>(`:scope > .${BUTTON_CLASS}`)?.remove();
-			}
-			for (const edge of canvas.edges.values()) setEdgeHidden(edge, false);
+			if (!keepVisuals) clearCollapseVisuals(canvas);
 		},
 	};
 }

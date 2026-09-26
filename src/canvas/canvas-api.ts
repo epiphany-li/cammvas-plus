@@ -21,6 +21,17 @@ export function writeCanvasDataKey(canvas: Canvas, key: string, value: unknown):
 	canvas.requestSave();
 }
 
+/** Toggle a class on every DOM part of a Canvas edge (line, ends, label, hit area). */
+export function toggleEdgeClass(edge: CanvasEdge, className: string, on: boolean): void {
+	for (const el of [
+		edge.lineGroupEl, edge.lineEl, edge.lineEndGroupEl, edge.startGroupEl, edge.endGroupEl,
+		edge.fromLineEnd?.el, edge.toLineEnd?.el, edge.labelElement?.wrapperEl,
+		edge.path?.display, edge.path?.interaction,
+	]) {
+		el?.classList.toggle(className, on);
+	}
+}
+
 /** The CodeMirror view of a node that is currently being edited. */
 export function getNodeEditorView(node: CanvasNode): CMEditorView | null {
 	const iframe = node.contentEl?.querySelector<HTMLIFrameElement>("iframe");

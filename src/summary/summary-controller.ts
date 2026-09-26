@@ -1,13 +1,14 @@
 import { Notice } from "obsidian";
 import type { Canvas, CanvasEdge, CanvasNode } from "../types/canvas-internal";
-import { startEditingAtEnd, writeCanvasDataKey } from "../canvas/canvas-api";
-import { collectCollapsedDescendantIds } from "../canvas/branch-collapse-state";
+import { startEditingAtEnd, toggleEdgeClass, writeCanvasDataKey } from "../canvas/canvas-api";
+import { collectHiddenIds } from "../canvas/branch-collapse-state";
 import { isHtmlElement } from "../ui/dom";
 import { tr } from "../i18n";
 import {
 	BRACKET_WIDTH,
 	SUMMARY_DATA_KEY,
 	SUMMARY_DEFAULT_TEXT,
+	SelectionError,
 	SummaryGraph,
 	SummaryRecord,
 	SummarySide,
@@ -34,7 +35,14 @@ export interface SummaryHandle {
 	removeBracket: (recordId: string) => void;
 	findByContentNode: (nodeId: string) => SummaryRecord | null;
 	isSummaryNode: (nodeId: string) => boolean;
-	cleanup: () => void;
+	/** Stop reacting to the canvas; keepVisuals leaves braces and hidden state as drawn. */
+	cleanup: (keepVisuals?: boolean) => void;
+}
+
+/** Remove summary hidden markers from a canvas (braces stay attached to their group nodes). */
+export function clearSummaryVisuals(canvas: Canvas): void {
+	for (const node of canvas.nodes.values()) node.nodeEl.removeClass(SUMMARY_HIDDEN_CLASS);
+	for (const edge of canvas.edges.values()) toggleEdgeClass(edge, SUMMARY_HIDDEN_CLASS, false);
 }
 
 /** Read the summary records currently stored in a canvas. */
@@ -46,6 +54,16 @@ export function getSummaryRecords(canvas: Canvas): SummaryRecord[] {
 export function getSummaryBracketIds(canvas: Canvas): Set<string> {
 	return new Set(getSummaryRecords(canvas).map((record) => record.bracketNodeId));
 }
+
+const SELECTION_ERRORS: Record<SelectionError, () => string> = {
+	"too-few": () => tr("Select at least two adjacent sibling nodes", "请至少选择两个相邻的兄弟节点"),
+	"parent-count": () => tr("Each selected node must have exactly one parent", "每个选中节点都必须恰好有一个父节点"),
+	"different-parents": () => tr("Selected nodes must share the same parent", "选中节点必须属于同一个父节点"),
+	"missing-parent": () => tr("The common parent node was not found", "找不到共同的父节点"),
+	"different-sides": () => tr("Selected nodes must be on the same side of their parent", "选中节点必须位于父节点的同一侧"),
+	"not-consecutive": () => tr("Select consecutive sibling nodes", "请选择连续相邻的兄弟节点"),
+	"already-summarized": () => tr("A selected node already belongs to another summary", "有节点已经属于另一个概要"),
+};
 
 function makeId(): string {
 	return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
@@ -81,17 +99,11 @@ export function registerSummaries(
 			children.set(edge.from, list);
 		}
 		const collapsed = canvas.getData().mindmapCollapsed ?? [];
-		return collectCollapsedDescendantIds(collapsed, (id) => children.get(id) ?? []);
+		return collectHiddenIds(collapsed, canvas.nodes.keys(), (id) => children.get(id) ?? []);
 	};
 
 	const setEdgeHidden = (edge: CanvasEdge, hidden: boolean): void => {
-		for (const el of [
-			edge.lineGroupEl, edge.lineEl, edge.lineEndGroupEl, edge.startGroupEl, edge.endGroupEl,
-			edge.fromLineEnd?.el, edge.toLineEnd?.el, edge.labelElement?.wrapperEl,
-			edge.path?.display, edge.path?.interaction,
-		]) {
-			el?.classList.toggle(SUMMARY_HIDDEN_CLASS, hidden);
-		}
+		toggleEdgeClass(edge, SUMMARY_HIDDEN_CLASS, hidden);
 	};
 
 	/** Draw the curly brace and the connector to the content node inside the bracket node. */
@@ -279,7 +291,7 @@ export function registerSummaries(
 		const g = graph();
 		const validation = validateSummarySelection(g, selectedIds, records);
 		if (!validation.ok) {
-			new Notice(validation.error);
+			new Notice(SELECTION_ERRORS[validation.error]());
 			return false;
 		}
 		const covered = collectCoveredIds(g.edges, validation.memberIds)
@@ -405,14 +417,13 @@ export function registerSummaries(
 		removeBracket,
 		findByContentNode,
 		isSummaryNode: (nodeId) => getSummaryRecords(canvas).some((record) => record.summaryNodeId === nodeId),
-		cleanup: () => {
+		cleanup: (keepVisuals = false) => {
 			disposed = true;
 			if (scheduled !== null) win.cancelAnimationFrame(scheduled);
 			canvas.wrapperEl.removeEventListener("pointerdown", onPointerDown, true);
 			win.removeEventListener("pointerup", onPointerUp, true);
 			win.removeEventListener("pointercancel", onPointerCancel, true);
-			for (const node of canvas.nodes.values()) node.nodeEl.removeClass(SUMMARY_HIDDEN_CLASS);
-			for (const edge of canvas.edges.values()) setEdgeHidden(edge, false);
+			if (!keepVisuals) clearSummaryVisuals(canvas);
 		},
 	};
 }

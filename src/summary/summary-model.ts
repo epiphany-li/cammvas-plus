@@ -114,9 +114,18 @@ function parentsIndex(edges: GraphEdge[]): Map<string, string[]> {
 
 const centerX = (rect: Rect): number => rect.x + rect.width / 2;
 
+export type SelectionError =
+	| "too-few"
+	| "parent-count"
+	| "different-parents"
+	| "missing-parent"
+	| "different-sides"
+	| "not-consecutive"
+	| "already-summarized";
+
 export type SelectionValidation =
 	| { ok: true; memberIds: string[]; parentId: string; side: SummarySide }
-	| { ok: false; error: string };
+	| { ok: false; error: SelectionError };
 
 /**
  * Check that the selected nodes can form a summary: at least two consecutive
@@ -130,25 +139,25 @@ export function validateSummarySelection(
 	const excluded = new Set([...getBracketIds(records), ...getSummaryNodeIds(records)]);
 	const selected = [...new Set(selectedIds)]
 		.filter((id) => graph.nodes.has(id) && !excluded.has(id));
-	if (selected.length < 2) return { ok: false, error: "请至少选择两个相邻的兄弟节点" };
+	if (selected.length < 2) return { ok: false, error: "too-few" };
 
 	const parents = parentsIndex(graph.edges);
 	const parentIds = selected.map((id) => parents.get(id) ?? []);
 	if (parentIds.some((list) => list.length !== 1)) {
-		return { ok: false, error: "每个选中节点都必须恰好有一个父节点" };
+		return { ok: false, error: "parent-count" };
 	}
 	const parentId = parentIds[0][0];
 	if (!parentIds.every((list) => list[0] === parentId)) {
-		return { ok: false, error: "选中节点必须属于同一个父节点" };
+		return { ok: false, error: "different-parents" };
 	}
 	const parent = graph.nodes.get(parentId);
-	if (!parent) return { ok: false, error: "找不到共同的父节点" };
+	if (!parent) return { ok: false, error: "missing-parent" };
 
 	const sideOf = (id: string): SummarySide =>
 		centerX(graph.nodes.get(id)!) >= centerX(parent) ? "right" : "left";
 	const side = sideOf(selected[0]);
 	if (!selected.every((id) => sideOf(id) === side)) {
-		return { ok: false, error: "选中节点必须位于父节点的同一侧" };
+		return { ok: false, error: "different-sides" };
 	}
 
 	const siblings = (childrenIndex(graph.edges).get(parentId) ?? [])
@@ -160,12 +169,12 @@ export function validateSummarySelection(
 		.filter((index) => index >= 0);
 	if (indices.length !== selected.length
 		|| Math.max(...indices) - Math.min(...indices) + 1 !== indices.length) {
-		return { ok: false, error: "请选择连续相邻的兄弟节点" };
+		return { ok: false, error: "not-consecutive" };
 	}
 
 	const used = new Set(records.flatMap((record) => record.memberNodeIds));
 	if (selected.some((id) => used.has(id))) {
-		return { ok: false, error: "有节点已经属于另一个概要" };
+		return { ok: false, error: "already-summarized" };
 	}
 
 	return {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectCollapsedDescendantIds } from "../src/canvas/branch-collapse-state";
+import { collectCollapsedDescendantIds, collectHiddenIds } from "../src/canvas/branch-collapse-state";
 
 const children = new Map<string, string[]>([
 	["root", ["a", "b"]],
@@ -31,5 +31,30 @@ describe("collectCollapsedDescendantIds", () => {
 		const cyclicChildren = (id: string): string[] =>
 			id === "a" ? ["b"] : id === "b" ? ["a"] : [];
 		expect(collectCollapsedDescendantIds(["a"], cyclicChildren)).toEqual(new Set(["b"]));
+	});
+});
+
+describe("collectHiddenIds", () => {
+	const graph = new Map<string, string[]>([
+		["root", ["p1", "p2"]],
+		["p1", ["shared", "only1"]],
+		["p2", ["shared"]],
+		["shared", ["deep"]],
+	]);
+	const all = ["root", "p1", "p2", "shared", "only1", "deep"];
+	const children = (id: string): string[] => graph.get(id) ?? [];
+
+	it("keeps a node visible while another, expanded parent still shows it", () => {
+		expect(collectHiddenIds(["p1"], all, children)).toEqual(new Set(["only1"]));
+	});
+
+	it("hides it once every parent is collapsed", () => {
+		expect(collectHiddenIds(["p1", "p2"], all, children)).toEqual(new Set(["only1", "shared", "deep"]));
+	});
+
+	it("behaves like collectCollapsedDescendantIds on plain trees", () => {
+		expect(collectHiddenIds(["a"], ["root", "a", "b", "a1", "a2", "a1x", "b1"], getChildren)).toEqual(
+			collectCollapsedDescendantIds(["a"], getChildren)
+		);
 	});
 });

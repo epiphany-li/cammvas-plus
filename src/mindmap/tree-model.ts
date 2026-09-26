@@ -1,5 +1,5 @@
 import type { Canvas, CanvasNode, CanvasNodeFileData } from "../types/canvas-internal";
-import { collectCollapsedDescendantIds } from "../canvas/branch-collapse-state";
+import { collectHiddenIds } from "../canvas/branch-collapse-state";
 
 export type BranchDirection = "left" | "right";
 
@@ -43,8 +43,9 @@ export function buildForest(canvas: Canvas, respectCollapsed = false): TreeNode[
 			children.push(edge.to.node.id);
 			childrenById.set(edge.from.node.id, children);
 		}
-		const hidden = collectCollapsedDescendantIds(
+		const hidden = collectHiddenIds(
 			canvas.getData().mindmapCollapsed ?? [],
+			visibleNodeIds,
 			(id) => childrenById.get(id) ?? []
 		);
 		for (const id of hidden) visibleNodeIds.delete(id);
