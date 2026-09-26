@@ -6,6 +6,8 @@
 
 Cammvas Plus adds the interactions people expect from standalone mind-mapping software while keeping every map as a standard `.canvas` file in the vault. Build branches from the keyboard, drag nodes onto other nodes to restructure a map, collapse subtrees, summarize sibling ranges, and navigate the hierarchy without leaving Canvas.
 
+![A Cammvas Plus mind map: an accent root, tinted main branches, a summary brace on the Retrieval branch, and a collapsed Memory branch showing its hidden-node count](./images/overview.png)
+
 ## Features
 
 - **Mind-map keyboard workflow:** outside editing, tap `Space` to edit the selected node (hold `Space` and drag to pan), `Enter` creates a sibling, `Tab` creates a child, and arrow keys navigate the tree. Editing starts with the cursor at the end of the text.
@@ -33,9 +35,28 @@ The mind map button menu also toggles **Drag to reparent**, **Auto-layout on man
 
 ## Keyboard Workflow
 
+| Key (outside editing) | Action |
+| --- | --- |
+| Tap `Space` | Edit the selected node, cursor at the end |
+| Hold `Space` + drag | Pan the canvas |
+| `Enter` | Add a sibling (on a summary: edit it) |
+| `Tab` | Add a child |
+| Arrow keys | Move between parent, children, and siblings |
+| `Escape` (while editing) | Finish editing |
+
 Outside editing, tap `Space` to edit the selected node; holding `Space` keeps Canvas's pan gesture. While editing, `Space`, `Enter`, and `Tab` stay with the text editor; press `Escape` or click outside the node to finish. Outside editing, plain `Enter` creates a sibling, plain `Tab` creates a child, and arrow keys navigate between nodes. `Enter` on a summary edits it.
 
 Cammvas Plus assigns no default hotkeys. Useful commands to bind under **Settings > Hotkeys** include **Toggle selected branch**, **Create summary from selected siblings**, **Add child node**, and **Add sibling node**.
+
+## Screenshots
+
+**Dark theme** — the hierarchy uses your theme's colors:
+
+![The same mind map in Obsidian's dark theme](./images/overview-dark.png)
+
+**Map outline** — follows collapse state and lists each summary under its parent:
+
+![The outline sidebar showing the tree, a collapsed Memory branch, and a summary tagged under Retrieval](./images/outline.png)
 
 ## Data Stored In Canvas Files
 
