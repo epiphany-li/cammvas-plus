@@ -1,63 +1,54 @@
 # Cammvas Plus
 
-## Local maintenance fork
-
-This repository is a separately maintained fork for a personal Obsidian workflow.
-The `cammvas` GitHub repository remains the upstream source; keep it configured as the
-`upstream` remote and merge upstream updates deliberately.
-
-The Plus branch includes interaction and maintenance improvements:
-
-- Automatic Markdown resize/edit-exit and structural changes preserve the current Canvas
-  viewport (`x/y/tx/ty/zoom/tZoom`) across the synchronous and next-frame layout pass.
-- Automatic re-layout after resize, insert, delete, flip, detach, and drag uses the full
-  relationship forest, so all transitively affected nodes are recalculated instead of only
-  the selected node's siblings.
-- Manual node resizing synchronizes widths at the same tree depth, remeasures wrapped
-  content, and reflows every affected branch without moving the viewport.
-- Deferred editor, outline, and drag callbacks are cancelled when their original interaction
-  is no longer current.
-- Leaving an editor with a background click cannot spill into Canvas's double-click card
-  creation, and selecting an already visible editing target does not recenter the viewport.
-
-Build and install the generated `main.js`, `manifest.json`, and `styles.css` into the vault's
-`.obsidian/plugins/cammvas-plus/` directory. Do not edit the generated bundle by hand.
-
-**A dedicated mind-mapping experience inside Obsidian Canvas.**
+**XMind-style mind mapping inside Obsidian Canvas.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![GitHub release](https://img.shields.io/github/v/release/epiphany-li/cammvas-plus)](https://github.com/epiphany-li/cammvas-plus/releases) [![Obsidian](https://img.shields.io/badge/Obsidian-1.13.4%2B-purple.svg)](https://obsidian.md)
 
-Cammvas adds the interactions people expect from standalone mind-mapping software while keeping every map as a standard `.canvas` file in the vault. Build branches from the keyboard, drag nodes onto other nodes to restructure a map, collapse complete subtrees, and navigate the hierarchy without leaving Canvas.
+Cammvas Plus adds the interactions people expect from standalone mind-mapping software while keeping every map as a standard `.canvas` file in the vault. Build branches from the keyboard, drag nodes onto other nodes to restructure a map, collapse subtrees, summarize sibling ranges, and navigate the hierarchy without leaving Canvas.
 
-## What Cammvas Adds
+## Features
 
-- **Mind-map keyboard workflow:** outside editing, `Space` edits the selected node, `Enter` creates a sibling, `Tab` creates a child, and arrow keys navigate the tree; while editing, `Enter`, `Tab`, and `Space` stay with the text editor, and `Escape` or an outside click exits editing.
-- **Drag to create branches:** drop one or multiple selected nodes onto another node to reparent their complete branches, with cycle prevention and a highlighted target.
-- **Collapsible branches:** fold and restore complete descendant trees directly from their parent nodes.
-- **Automatic tree layout:** compact contour-based placement with left, right, and balanced branches.
-- **Branch-only re-layout:** manually organize only the descendants of the selected node without moving its ancestors.
-- **Branch-aware dragging:** moving a node moves its descendants while preserving their relative positions.
-- **Map outline:** search, navigate, group, rename, and reorganize roots from a synchronized sidebar.
-- **Branch colors:** configurable palettes with automatic propagation through each branch.
+- **Mind-map keyboard workflow:** outside editing, tap `Space` to edit the selected node (hold `Space` and drag to pan), `Enter` creates a sibling, `Tab` creates a child, and arrow keys navigate the tree. Editing starts with the cursor at the end of the text.
+- **Drag to reparent:** drop one or more nodes onto another node to move their complete branches; the dragged cards fade so the highlighted target stays visible.
+- **Collapsible branches:** fold and restore subtrees from a small dot on the branch line; collapsed branches show how many nodes they hide, and expanding glides siblings into place.
+- **Summaries (概要):** select adjacent siblings and choose **Create summary** to add a curly brace and a summary topic, like XMind. Summaries follow their range through layout, collapse, and export, and clean themselves up when their range is deleted.
+- **Automatic tree layout:** left, right, and balanced branches, horizontal or vertical. The viewport stays anchored while the map reflows, so the node you are looking at does not jump.
+- **Visual hierarchy:** accent root, tinted main branches, outlined deeper topics, and link widths by depth, in light and dark themes.
+- **Manual sizes respected:** a height you drag by hand is kept; **Resize all nodes to fit content** returns nodes to automatic sizing.
+- **Map outline:** search, navigate, group, and rename roots from a sidebar that follows collapse state and lists summaries under their parent.
+- **PDF export:** vector PDF of the whole map, including summary braces.
+- **Robust graphs:** edge cycles and nodes with several parents no longer break layout.
+- **Localized:** the interface follows Obsidian's language (English and Chinese).
 - **Canvas-native storage:** no proprietary format, external service, network request, or telemetry.
 
 ## Quick Start
 
-1. Open a Canvas and activate **Mindmap mode** from the Canvas controls.
-2. Double-click empty Canvas space to create a root node.
-3. Use `Space` to edit a selected node, `Escape` or an outside click to finish editing, and `Enter` / `Tab` to create sibling and child nodes.
-4. Restructure branches by dropping nodes onto other nodes.
-5. Use the node chevrons to collapse or expand branches.
+1. Open a Canvas, click the **mind map** button in the Canvas controls, and make sure **Mindmap mode** is checked.
+2. Right-click empty Canvas space and choose **Create root node**.
+3. Select a node and press `Enter` / `Tab` to add sibling and child nodes; tap `Space` to edit and press `Escape` to finish.
+4. Drag nodes onto other nodes to restructure branches, and use the dot beside a node to collapse or expand it.
+5. Select two or more adjacent siblings, right-click, and choose **Create summary**.
 
-The Canvas controls also include toggles for **Drag to reparent** and **Mind mapping Enter and Tab**. Right-click a parent node to re-layout only that branch.
-
-All behavior can be configured under **Settings > Cammvas Plus**.
+The mind map button menu also toggles **Drag to reparent**, **Auto-layout on manual edits**, and **Mind mapping Enter and Tab**, switches between horizontal and vertical layout, exports a PDF, and opens the outline. All behavior can be configured under **Settings > Cammvas Plus**.
 
 ## Keyboard Workflow
 
-Press `Space` on a selected node to enter editing. While editing, `Space` inserts a normal text space, `Enter` inserts a new line, and `Tab` remains available to the text editor; press `Escape` or click outside the node to finish. An editing-exit double-click on empty space is treated only as leaving the editor, so it does not also create a card. Outside editing, plain `Enter` creates a sibling, plain `Tab` creates a child, and arrow keys navigate between nodes. Moving editing focus to a node already on screen preserves the current viewport.
+Outside editing, tap `Space` to edit the selected node; holding `Space` keeps Canvas's pan gesture. While editing, `Space`, `Enter`, and `Tab` stay with the text editor; press `Escape` or click outside the node to finish. Outside editing, plain `Enter` creates a sibling, plain `Tab` creates a child, and arrow keys navigate between nodes. `Enter` on a summary edits it.
 
-Cammvas does not assign default hotkeys to **Add child node**, **Add sibling node**, or **Create root node**. All commands remain available from the command palette and can be assigned custom hotkeys under **Settings > Hotkeys**.
+Cammvas Plus assigns no default hotkeys. Useful commands to bind under **Settings > Hotkeys** include **Toggle selected branch**, **Create summary from selected siblings**, **Add child node**, and **Add sibling node**.
+
+## Data Stored In Canvas Files
+
+Everything stays inside the `.canvas` file so maps remain portable:
+
+- `mindmap` — whether the canvas uses mind map mode (only written when toggled).
+- `mindmapCollapsed` — IDs of collapsed nodes.
+- `cammvasSummaries` — summary ranges; each summary is drawn with an ordinary group node (the brace) and text node (the topic), so the file still opens in plain Canvas.
+- `cammvasMinHeight` on a node — a height chosen by hand.
+
+## 中文简介
+
+Cammvas Plus 让 Obsidian 白板（Canvas）像 XMind 一样做思维导图：Enter/Tab 建节点、点按空格编辑、拖拽改父节点、折叠展开带动画、XMind 式“概要”（花括号）、自动排版且视角不乱跳、层级配色、大纲同步、PDF 导出。所有数据都保存在标准 `.canvas` 文件中，界面会跟随 Obsidian 语言显示中文。
 
 ## Installation
 
@@ -78,7 +69,7 @@ Once Cammvas Plus is accepted into the Obsidian community directory:
 
 ## Compatibility
 
-Cammvas requires Obsidian 1.13.4 or newer. Desktop and mobile use the same Canvas files and core mind-mapping features. On mobile, long-press and drag a node to reparent it; mouse- and modifier-specific interactions remain desktop-only. Several advanced Canvas interactions depend on undocumented runtime APIs, so compatibility is tested against current Obsidian releases.
+Cammvas Plus requires Obsidian 1.13.4 or newer. Desktop and mobile use the same Canvas files and core mind-mapping features. On mobile, long-press and drag a node to reparent it; mouse- and modifier-specific interactions remain desktop-only. Several advanced Canvas interactions depend on undocumented runtime APIs, so compatibility is tested against current Obsidian releases.
 
 ## Privacy And Permissions
 
@@ -88,7 +79,7 @@ Cammvas Plus runs locally, makes no network requests, and collects no telemetry.
 
 Cammvas Plus is maintained by [epiphany-li](https://github.com/epiphany-li) as a derivative of [Cammvas](https://github.com/cuatrecasespro/cammvas), developed by cuatrecasespro. Cammvas is based on the MIT-licensed [Mindvas](https://github.com/mobench/mindvas) project by mobench; all copyright and license notices are retained.
 
-Cammvas extends that foundation with a workflow designed to reproduce dedicated mind-mapping software inside Canvas, including drag-to-reparent branch creation, persistent branch collapsing, conventional mind-map hotkeys, spatial navigation, configurable branch palettes, root creation, and an expanded synchronized outline.
+Cammvas extends that foundation with a workflow designed to reproduce dedicated mind-mapping software inside Canvas, including drag-to-reparent branch creation, persistent branch collapsing, conventional mind-map hotkeys, spatial navigation, configurable branch palettes, root creation, and an expanded synchronized outline. Cammvas Plus adds summaries, animated collapse, viewport-stable layout, visual hierarchy, manual sizing, graph robustness, and localization on top of Cammvas.
 
 Cammvas is not affiliated with or endorsed by the original Mindvas project.
 

@@ -3,7 +3,7 @@
 	"name": "Cammvas Plus",
 	"version": "1.7.2",
 	"minAppVersion": "1.13.4",
-	"description": "Bring dedicated mind-mapping workflows to Canvas with branch drag-and-drop, collapsible trees, familiar hotkeys, automatic layout, and an outline.",
+	"description": "XMind-style mind mapping on Canvas: keyboard-first branching, drag to reparent, collapsible trees, summaries, automatic layout, and a synced outline.",
 	"author": "epiphany-li",
 	"authorUrl": "https://github.com/epiphany-li",
 	"isDesktopOnly": false
