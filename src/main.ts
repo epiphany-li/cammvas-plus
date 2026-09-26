@@ -44,6 +44,9 @@ import {
 } from "./summary/summary-controller";
 import { tr } from "./i18n";
 
+/** On the canvas wrapper while nodes glide to a new layout. */
+export const LAYOUT_ANIMATING_CLASS = "cammvas-layout-animating";
+
 export default class CanvasMindMapPlugin extends Plugin {
 	settings: MindMapSettings = DEFAULT_SETTINGS;
 
@@ -952,12 +955,12 @@ export default class CanvasMindMapPlugin extends Plugin {
 			: registerGroupDragHandler(canvas, this.canvasApi);
 
 		// Add persistent collapse controls to nodes that have descendants.
-		this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi, (nodeId) => {
+		this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi, () => {
 			if (this.settings.autoLayout && this.isMindmapCanvas(canvas)) {
-				// The node that was toggled stays under the pointer.
-				this.preserveViewport(canvas, () => {
-					this.layoutEngine.layout(canvas, new Set(canvas.nodes.keys()));
-				}, canvas.nodes.get(nodeId) ?? null);
+				// Glide siblings into place (like XMind) instead of teleporting;
+				// the root and the viewport stay put.
+				this.markLayoutAnimating(canvas);
+				this.preserveViewport(canvas, () => this.layoutEngine.layout(canvas));
 				this.updateGroupBounds(canvas);
 			}
 			this.summaryHandle?.syncNow();
@@ -1315,6 +1318,14 @@ export default class CanvasMindMapPlugin extends Plugin {
 		});
 	}
 
+	/** Flag an animated relayout so summaries can move along instead of snapping. */
+	private markLayoutAnimating(canvas: Canvas): void {
+		canvas.wrapperEl.addClass(LAYOUT_ANIMATING_CLASS);
+		this.trackedTimeout(canvas.wrapperEl.win, () => {
+			canvas.wrapperEl.removeClass(LAYOUT_ANIMATING_CLASS);
+		}, 360);
+	}
+
 	/** IDs of selected content nodes (groups excluded). */
 	private getSelectedNodeIds(canvas: Canvas): string[] {
 		const groupIds = getGroupIds(canvas);
@@ -1636,6 +1647,8 @@ export default class CanvasMindMapPlugin extends Plugin {
 		const minH = this.settings.defaultNodeHeight;
 		let changed = false;
 		for (const node of nodes) {
+			// Collapsed (display:none) cards measure as empty; never shrink them.
+			if (!node.isEditing && node.nodeEl && node.nodeEl.offsetParent === null) continue;
 			let desiredH: number | null = null;
 			if (node.isEditing) {
 				const { cmContent, scroller } = getEditorElements(node);

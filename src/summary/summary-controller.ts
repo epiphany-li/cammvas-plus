@@ -231,9 +231,16 @@ export function registerSummaries(
 				const dx = geometry.summaryX + record.offsetX - summaryNode.x;
 				const dy = geometry.summaryY + record.offsetY - summaryNode.y;
 				if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+					// During an animated relayout, glide with the members.
+					const animate = canvas.wrapperEl.hasClass("cammvas-layout-animating");
 					for (const id of summaryTree) {
 						const node = canvas.nodes.get(id);
-						node?.moveTo({ x: node.x + dx, y: node.y + dy });
+						if (!node) continue;
+						if (animate) {
+							node.nodeEl.addClass("mindmap-animating");
+							win.setTimeout(() => node.nodeEl.removeClass("mindmap-animating"), 350);
+						}
+						node.moveTo({ x: node.x + dx, y: node.y + dy });
 					}
 					moved = true;
 				}

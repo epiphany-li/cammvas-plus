@@ -5,6 +5,9 @@ import { collectCollapsedDescendantIds } from "./branch-collapse-state";
 
 const BUTTON_CLASS = "cammvas-canvas-collapse-button";
 export const COLLAPSED_HIDDEN_CLASS = "cammvas-canvas-branch-hidden";
+/** Briefly on nodes/edges that were just revealed by expanding, to fade them in. */
+const REVEALED_CLASS = "cammvas-branch-revealed";
+const REVEAL_MS = 400;
 
 export interface BranchCollapseHandle {
 	refresh: () => void;
@@ -47,6 +50,7 @@ export function registerBranchCollapse(
 	onToggled?: (nodeId: string) => void
 ): BranchCollapseHandle {
 	let disposed = false;
+	let previousHidden = new Set<string>();
 	let refreshRaf: number | null = null;
 	let observer: MutationObserver;
 	const win = canvas.wrapperEl.win;
@@ -128,6 +132,9 @@ export function registerBranchCollapse(
 		const childIds = (nodeId: string): string[] =>
 			canvasApi.getOutgoingEdges(canvas, nodeId).map((edge) => edge.to.node.id);
 		const hiddenIds = collectCollapsedDescendantIds(collapsedIds, childIds);
+		const revealed = new Set([...previousHidden].filter((id) => !hiddenIds.has(id) && canvas.nodes.has(id)));
+		previousHidden = hiddenIds;
+		const revealedEls: Element[] = [];
 		const hiddenSelection = Array.from(canvas.selection).some((item) => {
 			if ("nodeEl" in item) return hiddenIds.has(item.id);
 			return hiddenIds.has(item.from.node.id) || hiddenIds.has(item.to.node.id);
@@ -137,6 +144,7 @@ export function registerBranchCollapse(
 		const depths = computeDepths(canvas, childIds);
 		for (const node of canvas.nodes.values()) {
 			node.nodeEl.toggleClass(COLLAPSED_HIDDEN_CLASS, hiddenIds.has(node.id));
+			if (revealed.has(node.id)) revealedEls.push(node.nodeEl);
 			const depth = depths.get(node.id);
 			if (depth === undefined) delete node.nodeEl.dataset.cammvasDepth;
 			else node.nodeEl.dataset.cammvasDepth = String(Math.min(depth, 2));
@@ -160,9 +168,17 @@ export function registerBranchCollapse(
 				edge,
 				hiddenIds.has(edge.from.node.id) || hiddenIds.has(edge.to.node.id)
 			);
+			if (revealed.has(edge.to.node.id) && edge.lineGroupEl) revealedEls.push(edge.lineGroupEl);
 			const depth = depths.get(edge.to.node.id);
 			if (depth === undefined) edge.lineGroupEl?.removeAttribute("data-cammvas-depth");
 			else edge.lineGroupEl?.setAttribute("data-cammvas-depth", String(Math.min(depth, 2)));
+		}
+
+		if (revealedEls.length > 0) {
+			for (const el of revealedEls) el.classList.add(REVEALED_CLASS);
+			win.setTimeout(() => {
+				for (const el of revealedEls) el.classList.remove(REVEALED_CLASS);
+			}, REVEAL_MS);
 		}
 
 		observer.observe(canvas.wrapperEl, { childList: true, subtree: true });

@@ -4264,6 +4264,7 @@ var require_pako = __commonJS({
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
+  LAYOUT_ANIMATING_CLASS: () => LAYOUT_ANIMATING_CLASS,
   default: () => CanvasMindMapPlugin
 });
 module.exports = __toCommonJS(main_exports);
@@ -5134,8 +5135,42 @@ var LayoutEngine = class {
       this.layoutGroup(root, rightChildren, "right", rootX, rootY, positions);
       this.layoutGroup(root, leftChildren, "left", rootX, rootY, positions);
     }
+    this.carryCollapsedDescendants(canvas, positions);
     this.applyPositions(canvas, positions, skipAnimationNodeIds);
     updateAllEdgeSides(canvas, "horizontal");
+  }
+  /**
+   * Collapsed branches are left out of the layout, so their hidden nodes would
+   * keep stale positions and fly in from afar when expanded. Move them by the
+   * same offset as their collapsed ancestor so they re-appear beside it.
+   */
+  carryCollapsedDescendants(canvas, positions) {
+    var _a, _b;
+    const collapsed = (_a = canvas.getData().mindmapCollapsed) != null ? _a : [];
+    if (collapsed.length === 0) return;
+    const children = /* @__PURE__ */ new Map();
+    for (const edge of canvas.edges.values()) {
+      const list = (_b = children.get(edge.from.node.id)) != null ? _b : [];
+      list.push(edge.to.node.id);
+      children.set(edge.from.node.id, list);
+    }
+    for (const collapsedId of collapsed) {
+      const target = positions.get(collapsedId);
+      const node = canvas.nodes.get(collapsedId);
+      if (!target || !node) continue;
+      const dx = target.x - node.x;
+      const dy = target.y - node.y;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+      const hidden = collectCollapsedDescendantIds([collapsedId], (id) => {
+        var _a2;
+        return (_a2 = children.get(id)) != null ? _a2 : [];
+      });
+      for (const id of hidden) {
+        if (positions.has(id)) continue;
+        const descendant = canvas.nodes.get(id);
+        if (descendant) positions.set(id, { x: descendant.x + dx, y: descendant.y + dy });
+      }
+    }
   }
   /** Arrange every tree top-down, with child branches spread horizontally. */
   layoutVertically(canvas, skipAnimationNodeIds) {
@@ -5145,6 +5180,7 @@ var LayoutEngine = class {
     for (const root of forest) {
       this.layoutVerticalSubtree(root, root.canvasNode.x, root.canvasNode.y, 0, positions);
     }
+    this.carryCollapsedDescendants(canvas, positions);
     this.applyPositions(canvas, positions, skipAnimationNodeIds);
     updateAllEdgeSides(canvas, "vertical");
   }
@@ -5218,6 +5254,7 @@ var LayoutEngine = class {
       this.layoutGroup(parentTreeNode, rightChildren, "right", px2, py2, positions);
       this.layoutGroup(parentTreeNode, leftChildren, "left", px2, py2, positions);
     }
+    this.carryCollapsedDescendants(canvas, positions);
     this.applyPositions(canvas, positions, skipAnimationNodeIds);
     updateAllEdgeSides(canvas, "horizontal");
   }
@@ -5613,6 +5650,8 @@ var import_obsidian3 = require("obsidian");
 var import_obsidian2 = require("obsidian");
 var BUTTON_CLASS = "cammvas-canvas-collapse-button";
 var COLLAPSED_HIDDEN_CLASS = "cammvas-canvas-branch-hidden";
+var REVEALED_CLASS = "cammvas-branch-revealed";
+var REVEAL_MS = 400;
 function computeDepths(canvas, childIds) {
   const hasParent = /* @__PURE__ */ new Set();
   for (const edge of canvas.edges.values()) hasParent.add(edge.to.node.id);
@@ -5635,6 +5674,7 @@ function computeDepths(canvas, childIds) {
 }
 function registerBranchCollapse(canvas, canvasApi, onToggled) {
   let disposed = false;
+  let previousHidden = /* @__PURE__ */ new Set();
   let refreshRaf = null;
   let observer;
   const win = canvas.wrapperEl.win;
@@ -5705,6 +5745,9 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
     const collapsedIds = new Set((_a = canvas.getData().mindmapCollapsed) != null ? _a : []);
     const childIds = (nodeId) => canvasApi.getOutgoingEdges(canvas, nodeId).map((edge) => edge.to.node.id);
     const hiddenIds = collectCollapsedDescendantIds(collapsedIds, childIds);
+    const revealed = new Set([...previousHidden].filter((id) => !hiddenIds.has(id) && canvas.nodes.has(id)));
+    previousHidden = hiddenIds;
+    const revealedEls = [];
     const hiddenSelection = Array.from(canvas.selection).some((item) => {
       if ("nodeEl" in item) return hiddenIds.has(item.id);
       return hiddenIds.has(item.from.node.id) || hiddenIds.has(item.to.node.id);
@@ -5713,6 +5756,7 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
     const depths = computeDepths(canvas, childIds);
     for (const node of canvas.nodes.values()) {
       node.nodeEl.toggleClass(COLLAPSED_HIDDEN_CLASS, hiddenIds.has(node.id));
+      if (revealed.has(node.id)) revealedEls.push(node.nodeEl);
       const depth = depths.get(node.id);
       if (depth === void 0) delete node.nodeEl.dataset.cammvasDepth;
       else node.nodeEl.dataset.cammvasDepth = String(Math.min(depth, 2));
@@ -5735,9 +5779,16 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
         edge,
         hiddenIds.has(edge.from.node.id) || hiddenIds.has(edge.to.node.id)
       );
+      if (revealed.has(edge.to.node.id) && edge.lineGroupEl) revealedEls.push(edge.lineGroupEl);
       const depth = depths.get(edge.to.node.id);
       if (depth === void 0) (_b = edge.lineGroupEl) == null ? void 0 : _b.removeAttribute("data-cammvas-depth");
       else (_c = edge.lineGroupEl) == null ? void 0 : _c.setAttribute("data-cammvas-depth", String(Math.min(depth, 2)));
+    }
+    if (revealedEls.length > 0) {
+      for (const el of revealedEls) el.classList.add(REVEALED_CLASS);
+      win.setTimeout(() => {
+        for (const el of revealedEls) el.classList.remove(REVEALED_CLASS);
+      }, REVEAL_MS);
     }
     observer.observe(canvas.wrapperEl, { childList: true, subtree: true });
   };
@@ -23554,9 +23605,15 @@ function registerSummaries(canvas, onLayoutNeeded) {
         const dx = geometry.summaryX + record.offsetX - summaryNode.x;
         const dy = geometry.summaryY + record.offsetY - summaryNode.y;
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+          const animate = canvas.wrapperEl.hasClass("cammvas-layout-animating");
           for (const id of summaryTree) {
             const node = canvas.nodes.get(id);
-            node == null ? void 0 : node.moveTo({ x: node.x + dx, y: node.y + dy });
+            if (!node) continue;
+            if (animate) {
+              node.nodeEl.addClass("mindmap-animating");
+              win.setTimeout(() => node.nodeEl.removeClass("mindmap-animating"), 350);
+            }
+            node.moveTo({ x: node.x + dx, y: node.y + dy });
           }
           moved = true;
         }
@@ -24891,6 +24948,7 @@ function freemindToCanvas(xml, opts) {
 }
 
 // src/main.ts
+var LAYOUT_ANIMATING_CLASS = "cammvas-layout-animating";
 var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
   constructor() {
     super(...arguments);
@@ -25659,15 +25717,14 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
       }
     );
     this.cleanupGroupDragHandler = import_obsidian11.Platform.isMobile ? null : registerGroupDragHandler(canvas, this.canvasApi);
-    this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi, (nodeId) => {
-      var _a2, _b2;
+    this.branchCollapseHandle = registerBranchCollapse(canvas, this.canvasApi, () => {
+      var _a2;
       if (this.settings.autoLayout && this.isMindmapCanvas(canvas)) {
-        this.preserveViewport(canvas, () => {
-          this.layoutEngine.layout(canvas, new Set(canvas.nodes.keys()));
-        }, (_a2 = canvas.nodes.get(nodeId)) != null ? _a2 : null);
+        this.markLayoutAnimating(canvas);
+        this.preserveViewport(canvas, () => this.layoutEngine.layout(canvas));
         this.updateGroupBounds(canvas);
       }
-      (_b2 = this.summaryHandle) == null ? void 0 : _b2.syncNow();
+      (_a2 = this.summaryHandle) == null ? void 0 : _a2.syncNow();
     });
     this.summaryHandle = registerSummaries(canvas, () => this.debouncedOutlineRefresh());
     const onDragEnd = () => this.trackedRaf(canvas.wrapperEl.win, () => this.updateGroupBounds(canvas));
@@ -25961,6 +26018,13 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
       (_a = this.branchCollapseHandle) == null ? void 0 : _a.refresh();
     });
   }
+  /** Flag an animated relayout so summaries can move along instead of snapping. */
+  markLayoutAnimating(canvas) {
+    canvas.wrapperEl.addClass(LAYOUT_ANIMATING_CLASS);
+    this.trackedTimeout(canvas.wrapperEl.win, () => {
+      canvas.wrapperEl.removeClass(LAYOUT_ANIMATING_CLASS);
+    }, 360);
+  }
   /** IDs of selected content nodes (groups excluded). */
   getSelectedNodeIds(canvas) {
     const groupIds = getGroupIds(canvas);
@@ -26253,6 +26317,7 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
     const minH = this.settings.defaultNodeHeight;
     let changed = false;
     for (const node of nodes) {
+      if (!node.isEditing && node.nodeEl && node.nodeEl.offsetParent === null) continue;
       let desiredH = null;
       if (node.isEditing) {
         const { cmContent, scroller } = getEditorElements(node);

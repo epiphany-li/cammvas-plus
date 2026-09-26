@@ -481,3 +481,30 @@
 .canvas-wrapper.cammvas-reparenting .canvas-snaps {
 	display: none;
 }
+
+/* Collapse/expand: revealed nodes and links fade in while siblings glide. */
+@keyframes cammvas-reveal {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+.canvas-node.cammvas-branch-revealed,
+.cammvas-branch-revealed {
+	animation: cammvas-reveal 260ms ease-out;
+}
+
+/* Braces are redrawn at their final size; hide them while nodes are moving. */
+.cammvas-summary-brace {
+	transition: opacity 160ms ease-out;
+}
+
+.canvas-wrapper.cammvas-layout-animating .cammvas-summary-brace {
+	opacity: 0;
+	transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.cammvas-branch-revealed {
+		animation: none;
+	}
+}

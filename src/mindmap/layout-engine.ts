@@ -1,6 +1,7 @@
 import type { Canvas } from "../types/canvas-internal";
 import { buildForest, findTreeForNode, getDescendants, TreeNode, BranchDirection } from "./tree-model";
 import { updateAllEdgeSides } from "../canvas/edge-updater";
+import { collectCollapsedDescendantIds } from "../canvas/branch-collapse-state";
 
 export interface LayoutConfig {
 	horizontalGap: number;
@@ -89,8 +90,39 @@ export class LayoutEngine {
 			this.layoutGroup(root, leftChildren, "left", rootX, rootY, positions);
 		}
 
+		this.carryCollapsedDescendants(canvas, positions);
 		this.applyPositions(canvas, positions, skipAnimationNodeIds);
 		updateAllEdgeSides(canvas, "horizontal");
+	}
+
+	/**
+	 * Collapsed branches are left out of the layout, so their hidden nodes would
+	 * keep stale positions and fly in from afar when expanded. Move them by the
+	 * same offset as their collapsed ancestor so they re-appear beside it.
+	 */
+	private carryCollapsedDescendants(canvas: Canvas, positions: Map<string, NodePosition>): void {
+		const collapsed = canvas.getData().mindmapCollapsed ?? [];
+		if (collapsed.length === 0) return;
+		const children = new Map<string, string[]>();
+		for (const edge of canvas.edges.values()) {
+			const list = children.get(edge.from.node.id) ?? [];
+			list.push(edge.to.node.id);
+			children.set(edge.from.node.id, list);
+		}
+		for (const collapsedId of collapsed) {
+			const target = positions.get(collapsedId);
+			const node = canvas.nodes.get(collapsedId);
+			if (!target || !node) continue;
+			const dx = target.x - node.x;
+			const dy = target.y - node.y;
+			if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+			const hidden = collectCollapsedDescendantIds([collapsedId], (id) => children.get(id) ?? []);
+			for (const id of hidden) {
+				if (positions.has(id)) continue;
+				const descendant = canvas.nodes.get(id);
+				if (descendant) positions.set(id, { x: descendant.x + dx, y: descendant.y + dy });
+			}
+		}
 	}
 
 	/** Arrange every tree top-down, with child branches spread horizontally. */
@@ -103,6 +135,7 @@ export class LayoutEngine {
 			this.layoutVerticalSubtree(root, root.canvasNode.x, root.canvasNode.y, 0, positions);
 		}
 
+		this.carryCollapsedDescendants(canvas, positions);
 		this.applyPositions(canvas, positions, skipAnimationNodeIds);
 		updateAllEdgeSides(canvas, "vertical");
 	}
@@ -200,6 +233,7 @@ export class LayoutEngine {
 			this.layoutGroup(parentTreeNode, leftChildren, "left", px, py, positions);
 		}
 
+		this.carryCollapsedDescendants(canvas, positions);
 		this.applyPositions(canvas, positions, skipAnimationNodeIds);
 		updateAllEdgeSides(canvas, "horizontal");
 	}
