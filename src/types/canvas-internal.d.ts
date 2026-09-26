@@ -53,6 +53,8 @@ export interface CanvasNode {
 	}): void;
 	setColor(color: string): void;
 	setText(text: string): void;
+	/** Group nodes only. */
+	setLabel?(label: string): void;
 	startEditing(): void;
 	blur(): void;
 	focus(): void;
@@ -155,6 +157,8 @@ export interface Canvas {
 
 	undo?: () => void;
 	redo?: () => void;
+	/** Fills the blank-canvas right-click menu (no workspace event exists for it). */
+	showCreationMenu?: (menu: Menu, pos: { x: number; y: number }) => void;
 }
 
 export interface CanvasFileData {
@@ -229,12 +233,14 @@ export interface CMEditorView {
 	state: {
 		selection: { main: { from: number; to: number } };
 		sliceDoc: (from: number, to: number) => string;
-		doc: { toString: () => string };
+		doc: { toString: () => string; length: number };
 	};
 	dispatch: (tr: {
-		changes: { from: number; to: number; insert: string }
+		changes?: { from: number; to: number; insert: string }
 			| Array<{ from: number; to: number; insert: string }>;
+		selection?: { anchor: number; head?: number };
 	}) => void;
+	focus?: () => void;
 }
 
 /** DOM element with a CodeMirror view reference attached by Obsidian. */

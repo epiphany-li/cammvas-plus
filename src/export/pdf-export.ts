@@ -1,5 +1,28 @@
 import type { Canvas, CanvasEdge, CanvasNode, CanvasNodeFileData, NodeSide } from "../types/canvas-internal";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import {
+	SummaryRecord,
+	readSummaryRecords,
+	summaryBracePath,
+	summaryConnector,
+} from "../summary/summary-model";
+
+const SUMMARY_STROKE = "#6b7280";
+
+interface SummaryShape {
+	bracket: CanvasNode;
+	summary: CanvasNode;
+	side: SummaryRecord["side"];
+}
+
+/** Brackets and content nodes of every summary that can be drawn. */
+function getSummaryShapes(canvas: Canvas): SummaryShape[] {
+	return readSummaryRecords(canvas.data ?? {}).flatMap((record) => {
+		const bracket = canvas.nodes.get(record.bracketNodeId);
+		const summary = canvas.nodes.get(record.summaryNodeId);
+		return bracket && summary ? [{ bracket, summary, side: record.side }] : [];
+	});
+}
 
 const NODE_COLORS: Record<string, string> = {
 	"1": "#e75545",
@@ -284,7 +307,15 @@ export function createMindmapSvg(canvas: Canvas): string | null {
 			: "";
 		return `<path d="${edgePath(edge)}" class="edge" stroke="${stroke}"${edge.from.end === "arrow" ? " marker-start=\"url(#arrow)\"" : ""}${edge.to.end === "arrow" ? " marker-end=\"url(#arrow)\"" : ""}/>${labelMarkup}`;
 	}).join("");
-	const groupMarkup = nodes.filter((node) => nodeType(node, nodeTypes) === "group").map((node) => {
+	const summaries = getSummaryShapes(canvas);
+	const bracketIds = new Set(summaries.map((shape) => shape.bracket.id));
+	const summaryMarkup = summaries.map(({ bracket, summary, side }) => {
+		const { from, to } = summaryConnector(bracket, summary, side);
+		return `<path d="${summaryBracePath(bracket, side)} M ${from.x} ${from.y} L ${to.x} ${to.y}" class="summary"/>`;
+	}).join("");
+	const groupMarkup = nodes.filter((node) =>
+		nodeType(node, nodeTypes) === "group" && !bracketIds.has(node.id)
+	).map((node) => {
 		const color = nodeColor(node.color);
 		return `<g><rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="8" class="group" stroke="${color}"/><text x="${node.x + 14}" y="${node.y + 22}" class="group-label">${escapeXml(nodeText(node))}</text></g>`;
 	}).join("");
@@ -299,7 +330,7 @@ export function createMindmapSvg(canvas: Canvas): string | null {
 		return `<g><rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="8" class="node" stroke="${color}"/>${labels}</g>`;
 	}).join("");
 
-	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${width}" height="${height}" role="img" aria-label="Mind map export"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker><style>.edge{fill:none;stroke-width:2.5}.edge-label{font:14px sans-serif;fill:#4b5563;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round}.group{fill:#f8fafc;fill-opacity:.5;stroke-width:2;stroke-dasharray:6 4}.group-label{font:14px sans-serif;fill:#4b5563}.node{fill:#fff;stroke-width:3}.node-label{font:15px sans-serif;fill:#1f2937}</style></defs><rect x="${bounds.minX - PADDING}" y="${bounds.minY - PADDING}" width="${width}" height="${height}" fill="#fff"/>${groupMarkup}${edgeMarkup}${nodeMarkup}</svg>`;
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="${width}" height="${height}" role="img" aria-label="Mind map export"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker><style>.edge{fill:none;stroke-width:2.5}.edge-label{font:14px sans-serif;fill:#4b5563;text-anchor:middle;paint-order:stroke;stroke:#fff;stroke-width:5px;stroke-linejoin:round}.group{fill:#f8fafc;fill-opacity:.5;stroke-width:2;stroke-dasharray:6 4}.group-label{font:14px sans-serif;fill:#4b5563}.node{fill:#fff;stroke-width:3}.node-label{font:15px sans-serif;fill:#1f2937}.summary{fill:none;stroke:${SUMMARY_STROKE};stroke-width:2;stroke-linecap:round;stroke-linejoin:round}</style></defs><rect x="${bounds.minX - PADDING}" y="${bounds.minY - PADDING}" width="${width}" height="${height}" fill="#fff"/>${groupMarkup}${edgeMarkup}${summaryMarkup}${nodeMarkup}</svg>`;
 }
 
 /** Create a vector PDF and embed every browser-decodable Canvas image file node. */
@@ -323,9 +354,15 @@ export async function createMindmapPdf(
 	const page = pdf.addPage([layout.pageWidth, layout.pageHeight]);
 	const font = await pdf.embedFont(StandardFonts.Helvetica);
 	const pageHeight = layout.pageHeight;
+	const summaries = getSummaryShapes(canvas);
+	const bracketIds = new Set(summaries.map((shape) => shape.bracket.id));
+	const svgPoint = (x: number, y: number): [number, number] => {
+		const point = toPdfSvgPoint(pageHeight, layout, bounds, x, y);
+		return [point.x, point.y];
+	};
 
 	for (const node of nodes) {
-		if (nodeType(node, nodeTypes) !== "group") continue;
+		if (nodeType(node, nodeTypes) !== "group" || bracketIds.has(node.id)) continue;
 		const topLeft = toPdfPoint(pageHeight, layout, bounds, node.x, node.y);
 		const nodeWidth = node.width * layout.scale;
 		const nodeHeight = node.height * layout.scale;
@@ -370,6 +407,16 @@ export async function createMindmapPdf(
 				color: rgb(0.29, 0.33, 0.39),
 			});
 		}
+	}
+
+	for (const { bracket, summary, side } of summaries) {
+		const { from, to } = summaryConnector(bracket, summary, side);
+		const [fx, fy] = svgPoint(from.x, from.y);
+		const [tx, ty] = svgPoint(to.x, to.y);
+		page.drawSvgPath(`${summaryBracePath(bracket, side, svgPoint)} M ${fx} ${fy} L ${tx} ${ty}`, {
+			borderColor: toPdfColor(SUMMARY_STROKE),
+			borderWidth: 2 * layout.scale,
+		});
 	}
 
 	for (const node of nodes) {

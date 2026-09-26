@@ -1,8 +1,9 @@
 import { Notice } from "obsidian";
 import type { Canvas, CanvasEdge, CanvasNode } from "../types/canvas-internal";
-import { writeCanvasDataKey } from "../canvas/canvas-api";
+import { startEditingAtEnd, writeCanvasDataKey } from "../canvas/canvas-api";
 import { collectCollapsedDescendantIds } from "../canvas/branch-collapse-state";
 import { isHtmlElement } from "../ui/dom";
+import { tr } from "../i18n";
 import {
 	BRACKET_WIDTH,
 	SUMMARY_DATA_KEY,
@@ -14,6 +15,8 @@ import {
 	computeSummaryGeometry,
 	readSummaryRecords,
 	reconcileSummaryRecords,
+	summaryBracePath,
+	summaryConnector,
 	validateSummarySelection,
 } from "./summary-model";
 
@@ -91,15 +94,22 @@ export function registerSummaries(
 		}
 	};
 
+	/** Draw the curly brace and the connector to the content node inside the bracket node. */
 	const updateConnector = (bracket: CanvasNode, summaryNode: CanvasNode, side: SummarySide): void => {
-		const startX = side === "left" ? bracket.x : bracket.x + bracket.width;
-		const startY = bracket.y + bracket.height / 2;
-		const endX = side === "left" ? summaryNode.x + summaryNode.width : summaryNode.x;
-		const endY = summaryNode.y + summaryNode.height / 2;
-		const dx = endX - startX;
-		const dy = endY - startY;
-		bracket.nodeEl.style.setProperty("--cammvas-summary-line-length", `${Math.hypot(dx, dy)}px`);
-		bracket.nodeEl.style.setProperty("--cammvas-summary-line-angle", `${Math.atan2(dy, dx)}rad`);
+		let svg = bracket.nodeEl.querySelector<SVGSVGElement>(":scope > svg.cammvas-summary-brace");
+		if (!svg) {
+			svg = bracket.nodeEl.createSvg("svg", { cls: "cammvas-summary-brace" });
+			svg.createSvg("path", { cls: "cammvas-summary-brace-path" });
+			svg.createSvg("path", { cls: "cammvas-summary-connector" });
+		}
+		// Node-local coordinates: the bracket's top-left corner is the origin.
+		const local = (x: number, y: number): [number, number] => [x - bracket.x, y - bracket.y];
+		const [bracePath, connectorPath] = Array.from(svg.querySelectorAll("path"));
+		bracePath?.setAttribute("d", summaryBracePath(bracket, side, local));
+		const { from, to } = summaryConnector(bracket, summaryNode, side);
+		const [fx, fy] = local(from.x, from.y);
+		const [tx, ty] = local(to.x, to.y);
+		connectorPath?.setAttribute("d", `M ${fx} ${fy} L ${tx} ${ty}`);
 	};
 
 	const syncNow = (): void => {
@@ -129,8 +139,8 @@ export function registerSummaries(
 			}
 			if (reconciled.removals.length > 0) {
 				new Notice(reconciled.removals.length === 1
-					? "概要的成员不足两个，已解除该概要"
-					: `已解除 ${reconciled.removals.length} 个失效的概要`);
+					? tr("A summary lost its range and was removed", "概要的成员不足两个，已解除该概要")
+					: tr(`Removed ${reconciled.removals.length} invalid summaries`, `已解除 ${reconciled.removals.length} 个失效的概要`));
 			}
 			records = reconciled.records;
 			writeRecords(records);
@@ -285,7 +295,7 @@ export function registerSummaries(
 				{
 					id: summaryNodeId,
 					type: "text",
-					text: SUMMARY_DEFAULT_TEXT,
+					text: tr("Summary", SUMMARY_DEFAULT_TEXT),
 					x: geometry.summaryX,
 					y: geometry.summaryY,
 					width: 260,
@@ -315,7 +325,8 @@ export function registerSummaries(
 			const node = canvas.nodes.get(summaryNodeId);
 			if (!node || disposed) return;
 			canvas.selectOnly(node);
-			node.startEditing();
+			// Select the placeholder so typing replaces it.
+			startEditingAtEnd(node, true);
 		}, 80);
 		return true;
 	};
@@ -329,7 +340,7 @@ export function registerSummaries(
 		canvas.nodes.get(record.summaryNodeId)?.nodeEl.removeClass(SUMMARY_CONTENT_CLASS);
 		writeRecords(records.filter((item) => item.id !== recordId));
 		canvas.requestSave();
-		new Notice("已移除概要括号，概要内容节点保留");
+		new Notice(tr("Summary bracket removed; the content node was kept", "已移除概要括号，概要内容节点保留"));
 	};
 
 	// Remember where the user drops a summary content node as a persistent offset.

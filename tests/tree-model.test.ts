@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Canvas, CanvasEdge, CanvasNode } from "../src/types/canvas-internal";
-import { buildForest, findTreeForNode, getDescendants, getNodeTitle } from "../src/mindmap/tree-model";
+import { buildForest, findTreeForNode, getDescendants, getNodeTitle, stripInlineMarkdown } from "../src/mindmap/tree-model";
 
 function node(id: string, x: number, y: number): CanvasNode {
 	return { id, x, y, width: 100, height: 50 } as CanvasNode;
@@ -129,5 +129,20 @@ describe("buildForest graph safety", () => {
 		));
 		const all = getDescendants(forest[0]).map((item) => item.canvasNode.id);
 		expect(all.filter((id) => id === "shared")).toHaveLength(1);
+	});
+});
+
+describe("stripInlineMarkdown", () => {
+	it.each([
+		["## RAG 检索链路", "RAG 检索链路"],
+		["向量召回 + **BM25** 混合", "向量召回 + BM25 混合"],
+		["`trace_id` 贯穿全链路", "trace_id 贯穿全链路"],
+		["- [ ] 待办事项", "待办事项"],
+		["1. 第一步", "第一步"],
+		["见 [[项目笔记|笔记]] 和 [官网](https://x.y)", "见 笔记 和 官网"],
+		["~~废弃~~ ==重点== *强调*", "废弃 重点 强调"],
+		["snake_case_name 保留下划线", "snake_case_name 保留下划线"],
+	])("%s → %s", (input, expected) => {
+		expect(stripInlineMarkdown(input)).toBe(expected);
 	});
 });

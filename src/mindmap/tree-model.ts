@@ -146,15 +146,26 @@ export function getGroupIds(canvas: Canvas): Set<string> {
 /** Return the Canvas text title, or the linked Markdown filename for file nodes. */
 export function getNodeTitle(node: CanvasNode, data?: CanvasNodeFileData): string {
 	const firstLine = (node.text || "").split("\n")[0].trim();
-	if (firstLine) {
-		return firstLine
-			.replace(/^#+\s*/, "")
-			.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-			|| "Untitled";
-	}
+	if (firstLine) return stripInlineMarkdown(firstLine) || "Untitled";
 
 	const fileName = data?.file?.split("/").pop();
 	return fileName?.replace(/\.md$/i, "") || "Untitled";
+}
+
+/** Plain text of one Markdown line, as shown in the outline. */
+export function stripInlineMarkdown(line: string): string {
+	return line
+		.replace(/^#+\s*/, "")
+		.replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
+		.replace(/^>\s*/, "")
+		.replace(/!?\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
+		.replace(/!?\[\[([^\]]*)\]\]/g, "$1")
+		.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+		.replace(/(\*\*|__)(.+?)\1/g, "$2")
+		.replace(/(~~|==)(.+?)\1/g, "$2")
+		.replace(/\*(\S(?:.*?\S)?)\*/g, "$1")
+		.replace(/`([^`]*)`/g, "$1")
+		.trim();
 }
 
 /**

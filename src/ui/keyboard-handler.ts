@@ -1,6 +1,6 @@
 import { Platform, Plugin } from "obsidian";
 import type { Canvas, CanvasNode, CMEditorView, CMContentElement } from "../types/canvas-internal";
-import { CanvasAPI } from "../canvas/canvas-api";
+import { CanvasAPI, getNodeEditorView, startEditingAtEnd } from "../canvas/canvas-api";
 import { NodeOperations } from "../mindmap/node-operations";
 import { LayoutEngine } from "../mindmap/layout-engine";
 import { BranchColors } from "../mindmap/branch-colors";
@@ -25,6 +25,10 @@ import { isNodeEditorFocused, shouldUseNodeArrowNavigation } from "./editing-sta
 import { pluginCommandId } from "./plugin-command";
 import { isDomNode, isInteractiveControlTarget } from "./dom";
 import { focusCanvasKeyboardTarget } from "./canvas-keyboard-focus";
+import { tr } from "../i18n";
+
+/** Longest Space press that still counts as a tap (edit) rather than a hold (pan). */
+const SPACE_TAP_MS = 350;
 
 /**
  * Registers all mind map keyboard shortcuts on the canvas.
@@ -40,6 +44,11 @@ export class KeyboardHandler {
 	private arrowNavigationCanvas: Canvas | null = null;
 	private arrowKeyRestorers: Array<() => void> = [];
 	private pendingFocusRestore: { win: Window; id: number } | null = null;
+	/**
+	 * Space pressed on a selected node. It becomes "edit" only if released
+	 * quickly without dragging; holding Space keeps Canvas's pan gesture.
+	 */
+	private pendingSpaceEdit: { node: CanvasNode; time: number; moved: boolean } | null = null;
 
 	constructor(
 		private plugin: Plugin,
@@ -61,7 +70,7 @@ export class KeyboardHandler {
 		// Command-palette action for editing the selected node.
 		this.plugin.addCommand({
 			id: "mindmap-edit-node",
-			name: "Edit selected node",
+			name: tr("Edit selected node", "编辑选中节点"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -73,14 +82,14 @@ export class KeyboardHandler {
 				if (node.isEditing) return false;
 				if (checking) return true;
 
-				node.startEditing();
+				startEditingAtEnd(node);
 			},
 		});
 
 		// Ctrl+S → Save and exit edit mode
 		this.plugin.addCommand({
 			id: "mindmap-save-node",
-			name: "Save and exit edit mode",
+			name: tr("Save and exit edit mode", "保存并退出编辑"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -96,7 +105,7 @@ export class KeyboardHandler {
 		// Create child node
 		this.plugin.addCommand({
 			id: "mindmap-add-child",
-			name: "Add child node",
+			name: tr("Add child node", "新建子节点"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -111,7 +120,7 @@ export class KeyboardHandler {
 		// Create sibling node
 		this.plugin.addCommand({
 			id: "mindmap-add-sibling",
-			name: "Add sibling node",
+			name: tr("Add sibling node", "新建兄弟节点"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -126,7 +135,7 @@ export class KeyboardHandler {
 		// Ctrl+Shift+Enter → Delete node, focus parent
 		this.plugin.addCommand({
 			id: "mindmap-delete-node",
-			name: "Delete node and focus parent",
+			name: tr("Delete node and focus parent", "删除节点并选中父节点"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -148,7 +157,7 @@ export class KeyboardHandler {
 		// Ctrl+Shift+S → Swap/flip branch to other side
 		this.plugin.addCommand({
 			id: "mindmap-flip-branch",
-			name: "Flip branch to other side",
+			name: tr("Flip branch to other side", "把分支翻到另一侧"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -176,7 +185,7 @@ export class KeyboardHandler {
 		// Ctrl+Shift+D → Toggle balanced layout (distribute children on both sides)
 		this.plugin.addCommand({
 			id: "mindmap-toggle-balance",
-			name: "Toggle balanced layout",
+			name: tr("Toggle balanced layout", "切换左右平衡布局"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -233,7 +242,7 @@ export class KeyboardHandler {
 		// Ctrl+Alt+Right → Navigate spatially right
 		this.plugin.addCommand({
 			id: "mindmap-nav-right",
-			name: "Navigate right",
+			name: tr("Navigate right", "向右导航"),
 			checkCallback: (checking: boolean) => {
 				return this.navigateCommand(checking, (tree) => {
 					if (!tree.direction) {
@@ -254,7 +263,9 @@ export class KeyboardHandler {
 						const parentCx = tree.parent.canvasNode.x + tree.parent.canvasNode.width / 2;
 						if (parentCx >= nodeCx) return tree.parent.canvasNode;
 					}
-					return null;
+					// A leaf pointing away from its parent has nowhere to go: stay put
+					// instead of jumping to a nearby node of another branch.
+					return tree.parent ? tree.canvasNode : null;
 				}, "right");
 			},
 		});
@@ -262,7 +273,7 @@ export class KeyboardHandler {
 		// Ctrl+Alt+Left → Navigate spatially left
 		this.plugin.addCommand({
 			id: "mindmap-nav-left",
-			name: "Navigate left",
+			name: tr("Navigate left", "向左导航"),
 			checkCallback: (checking: boolean) => {
 				return this.navigateCommand(checking, (tree) => {
 					if (!tree.direction) {
@@ -283,7 +294,9 @@ export class KeyboardHandler {
 						const parentCx = tree.parent.canvasNode.x + tree.parent.canvasNode.width / 2;
 						if (parentCx < nodeCx) return tree.parent.canvasNode;
 					}
-					return null;
+					// A leaf pointing away from its parent has nowhere to go: stay put
+					// instead of jumping to a nearby node of another branch.
+					return tree.parent ? tree.canvasNode : null;
 				}, "left");
 			},
 		});
@@ -291,7 +304,7 @@ export class KeyboardHandler {
 		// Ctrl+Alt+Down → Navigate to next sibling (side-aware if balanced, Y-order if single-side)
 		this.plugin.addCommand({
 			id: "mindmap-nav-next-sibling",
-			name: "Navigate to next sibling",
+			name: tr("Navigate to next sibling", "导航到下一个兄弟节点"),
 			checkCallback: (checking: boolean) => {
 				return this.navigateCommand(checking, (tree) => {
 					if (!tree.parent) return null;
@@ -309,7 +322,7 @@ export class KeyboardHandler {
 		// Ctrl+Alt+Up → Navigate to previous sibling (side-aware if balanced, Y-order if single-side)
 		this.plugin.addCommand({
 			id: "mindmap-nav-prev-sibling",
-			name: "Navigate to previous sibling",
+			name: tr("Navigate to previous sibling", "导航到上一个兄弟节点"),
 			checkCallback: (checking: boolean) => {
 				return this.navigateCommand(checking, (tree) => {
 					if (!tree.parent) return null;
@@ -384,7 +397,7 @@ export class KeyboardHandler {
 		if (this.isSummaryNode?.(canvas, node)) {
 			event.preventDefault();
 			event.stopImmediatePropagation();
-			node.startEditing();
+			startEditingAtEnd(node);
 			return true;
 		}
 
@@ -466,16 +479,36 @@ export class KeyboardHandler {
 		const keydownHandler = (event: KeyboardEvent): void => {
 			if (this.canvasApi.getActiveCanvas() !== canvas) return;
 			if (!this.isCanvasKeyboardTarget(canvas, event.target)) return;
+			if (event.key !== " " && event.key !== "Spacebar") this.pendingSpaceEdit = null;
 
 			this.handleEditingStateShortcut(canvas, event);
+		};
+		const keyupHandler = (event: KeyboardEvent): void => {
+			if (event.key !== " " && event.key !== "Spacebar") return;
+			const pending = this.pendingSpaceEdit;
+			this.pendingSpaceEdit = null;
+			if (!pending || pending.moved || Date.now() - pending.time > SPACE_TAP_MS) return;
+			if (this.canvasApi.getActiveCanvas() !== canvas) return;
+			if (this.canvasApi.getSelectedNode(canvas) !== pending.node || pending.node.isEditing) return;
+			event.preventDefault();
+			startEditingAtEnd(pending.node);
+		};
+		// Any pointer press while Space is held means the user is panning.
+		const pointerHandler = (): void => {
+			if (this.pendingSpaceEdit) this.pendingSpaceEdit.moved = true;
 		};
 
 		// Arrow-key navigation changes Canvas selection without necessarily moving
 		// DOM focus. Capture at the window so a following Space still reaches us
 		// when the browser reports body/document as the keyboard event target.
 		win.addEventListener("keydown", keydownHandler, true);
+		win.addEventListener("keyup", keyupHandler, true);
+		canvas.wrapperEl.addEventListener("pointerdown", pointerHandler, true);
 		this.arrowKeyRestorers.push(() => {
 			win.removeEventListener("keydown", keydownHandler, true);
+			win.removeEventListener("keyup", keyupHandler, true);
+			canvas.wrapperEl.removeEventListener("pointerdown", pointerHandler, true);
+			this.pendingSpaceEdit = null;
 		});
 	}
 
@@ -486,10 +519,9 @@ export class KeyboardHandler {
 		if (!node.isEditing && isInteractiveControlTarget(event.target)) return false;
 
 		if (shouldStartEditingOnSpace(event, node.isEditing)) {
-			event.preventDefault();
-			event.stopImmediatePropagation();
-			node.startEditing();
-			return true;
+			// Decide on keyup: a quick tap edits, a hold stays with Canvas panning.
+			if (!event.repeat) this.pendingSpaceEdit = { node, time: Date.now(), moved: false };
+			return false;
 		}
 
 		if (!shouldExitEditingOnEscape(event, node.isEditing)) return false;
@@ -582,12 +614,7 @@ export class KeyboardHandler {
 	 * Access the CodeMirror 6 EditorView inside a canvas node's iframe.
 	 */
 	getEditorView(node: CanvasNode): CMEditorView | null {
-		const iframe = node.contentEl?.querySelector<HTMLIFrameElement>("iframe");
-		const doc = iframe?.contentDocument ?? node.contentEl?.ownerDocument;
-		if (!doc) return null;
-		const container = iframe?.contentDocument ?? node.contentEl;
-		const cmContent = container?.querySelector<CMContentElement>(".cm-content");
-		return cmContent?.cmView?.view ?? null;
+		return getNodeEditorView(node);
 	}
 
 	/**

@@ -1,6 +1,6 @@
 import { Plugin, Notice, TFile, TFolder, Menu, Platform, debounce, WorkspaceLeaf, setIcon, ItemView, addIcon } from "obsidian";
 import type { Canvas, CanvasNode, CanvasEdge, CreateNodeOptions } from "./types/canvas-internal";
-import { CanvasAPI } from "./canvas/canvas-api";
+import { CanvasAPI, writeCanvasDataKey } from "./canvas/canvas-api";
 import { NodeOperations } from "./mindmap/node-operations";
 import { LayoutEngine, LayoutOrientation } from "./mindmap/layout-engine";
 import { BranchColors } from "./mindmap/branch-colors";
@@ -42,6 +42,7 @@ import {
 	getSummaryBracketIds,
 	getSummaryRecords,
 } from "./summary/summary-controller";
+import { tr } from "./i18n";
 
 export default class CanvasMindMapPlugin extends Plugin {
 	settings: MindMapSettings = DEFAULT_SETTINGS;
@@ -88,7 +89,11 @@ export default class CanvasMindMapPlugin extends Plugin {
 		undo?: () => void;
 		redo?: () => void;
 		selectOnly?: (item: CanvasNode | CanvasEdge) => void;
+		showCreationMenu?: (menu: Menu, pos: { x: number; y: number }) => void;
 	} = {};
+	/** Node ids at the last save, to notice nodes deleted natively (Delete key). */
+	private knownNodeIds: Set<string> | null = null;
+	private removalRelayoutPending = false;
 	/** Set to true on unload to prevent deferred callbacks from running. */
 	private unloaded = false;
 	/** Navigation history for back/forward. */
@@ -151,7 +156,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 		this.addCommand({
 			id: "mindmap-create-summary",
-			name: "Create summary from selected siblings",
+			name: tr("Create summary from selected siblings", "为选中的兄弟节点创建概要"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas || !this.summaryHandle || canvas !== this.interceptedCanvas) return false;
@@ -164,7 +169,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 		this.addCommand({
 			id: "mindmap-remove-summary",
-			name: "Remove summary bracket (keep content node)",
+			name: tr("Remove summary bracket (keep content node)", "移除概要括号（保留内容）"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas || !this.summaryHandle || canvas !== this.interceptedCanvas) return false;
@@ -178,7 +183,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 		this.addCommand({
 			id: "mindmap-toggle-branch",
-			name: "Toggle selected branch",
+			name: tr("Toggle selected branch", "折叠/展开选中分支"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas || !this.branchCollapseHandle || canvas !== this.interceptedCanvas) return false;
@@ -192,7 +197,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Re-layout entire mind map
 		this.addCommand({
 			id: "mindmap-relayout",
-			name: "Re-layout mind map",
+			name: tr("Re-layout mind map", "重新排版导图"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -205,7 +210,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 		this.addCommand({
 			id: "mindmap-relayout-selected-branch",
-			name: "Re-layout selected branch",
+			name: tr("Re-layout selected branch", "重新排版选中分支"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas || !this.isMindmapCanvas(canvas)) return false;
@@ -219,7 +224,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Create an independent root at the center of the visible canvas
 		this.addCommand({
 			id: "mindmap-create-root",
-			name: "Create root node",
+			name: tr("Create root node", "新建根节点"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas || !this.isMindmapCanvas(canvas)) return false;
@@ -232,7 +237,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Layout forest (arrange trees within a group)
 		this.addCommand({
 			id: "mindmap-layout-forest",
-			name: "Layout forest",
+			name: tr("Layout forest", "整理多棵树"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -270,7 +275,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Detach subtree as independent tree
 		this.addCommand({
 			id: "mindmap-detach-subtree",
-			name: "Detach subtree as independent tree",
+			name: tr("Detach subtree as independent tree", "把子树拆分为独立的树"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -300,7 +305,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Resize + re-layout selected subtree (Ctrl+Shift+L)
 		this.addCommand({
 			id: "mindmap-resize-subtree",
-			name: "Resize & re-layout selected subtree",
+			name: tr("Resize & re-layout selected subtree", "按内容调整选中子树尺寸并重新排版"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -322,7 +327,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Resize all nodes to fit content (Ctrl+Shift+Alt+R)
 		this.addCommand({
 			id: "mindmap-resize-all",
-			name: "Resize all nodes to fit content",
+			name: tr("Resize all nodes to fit content", "按内容调整全部节点尺寸"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -341,7 +346,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Apply branch colors
 		this.addCommand({
 			id: "mindmap-apply-colors",
-			name: "Apply branch colors",
+			name: tr("Apply branch colors", "应用分支配色"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -354,7 +359,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Export the current map through the native PDF print dialog.
 		this.addCommand({
 			id: "mindmap-export-pdf",
-			name: "Export mind map as high-quality PDF",
+			name: tr("Export mind map as high-quality PDF", "导出导图为高清 PDF"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas || !this.isMindmapCanvas(canvas) || canvas.nodes.size === 0) return false;
@@ -366,7 +371,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Command: Toggle mindmap mode for current canvas
 		this.addCommand({
 			id: "mindmap-toggle-mode",
-			name: "Toggle mindmap mode for this canvas",
+			name: tr("Toggle mindmap mode for this canvas", "切换当前画布的导图模式"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas) return false;
@@ -398,28 +403,10 @@ export default class CanvasMindMapPlugin extends Plugin {
 				if (!(file instanceof TFolder)) return;
 
 				menu.addItem((item) => {
-					item.setTitle("Import mind map (.mm) to canvas")
+					item.setTitle(tr("Import mind map (.mm) to canvas", "导入思维导图（.mm）到画布"))
 						.setIcon("file-input")
 						.onClick(() => this.importFreeMindFile(file.path));
 				});
-			})
-		);
-
-		// Canvas background context menu: create an independent root node or export.
-		this.registerEvent(
-			this.app.workspace.on("canvas:menu", (menu: Menu, canvas: Canvas) => {
-				if (!this.isMindmapCanvas(canvas)) return;
-				menu.addItem((item) => item
-					.setTitle("Create root node")
-					.setIcon("circle-plus")
-					.onClick(() => this.createRootNode()));
-				menu.addItem((item) => item
-					.setTitle("Export as high-quality PDF")
-					.setIcon("file-down")
-					.setDisabled(canvas.nodes.size === 0)
-					.onClick(() => {
-						void this.exportMindmapPdf(canvas);
-					}));
 			})
 		);
 
@@ -430,7 +417,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				const selected = this.getSelectedNodeIds(canvas);
 				if (selected.length < 2) return;
 				menu.addItem((item) => item
-					.setTitle("创建概要")
+					.setTitle(tr("Create summary", "创建概要"))
 					.setIcon("brackets")
 					.onClick(() => this.summaryHandle?.create(selected)));
 			})
@@ -442,28 +429,28 @@ export default class CanvasMindMapPlugin extends Plugin {
 				const canvas = node.canvas;
 
 				menu.addItem((item) => {
-					item.setTitle("Copy node link")
+					item.setTitle(tr("Copy node link", "复制节点链接"))
 						.setIcon("link")
 						.onClick(() => {
 							const canvasPath = node.canvas.view.file.path;
 							void copyText(
 								node.nodeEl.win,
 								`obsidian://cammvas-plus-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${node.id}`,
-								"Node link copied"
+								tr("Node link copied", "已复制节点链接")
 							);
 						});
 				});
 				if (Platform.isMobile && this.isMindmapCanvas(canvas)) {
 					menu.addItem((item) => item
-						.setTitle("Add child node")
+						.setTitle(tr("Add child node", "新建子节点"))
 						.setIcon("corner-down-right")
 						.onClick(() => this.keyboardHandler.addChildNode(canvas, node)));
 					menu.addItem((item) => item
-						.setTitle("Add sibling node")
+						.setTitle(tr("Add sibling node", "新建兄弟节点"))
 						.setIcon("list-plus")
 						.onClick(() => this.keyboardHandler.addSiblingNode(canvas, node)));
 					menu.addItem((item) => item
-						.setTitle("Zoom to branch")
+						.setTitle(tr("Zoom to branch", "缩放到分支"))
 						.setIcon("scan")
 						.onClick(() => this.navigation.zoomToBranch(canvas, node)));
 				}
@@ -472,29 +459,29 @@ export default class CanvasMindMapPlugin extends Plugin {
 					: null;
 				if (summaryRecord) {
 					menu.addItem((item) => item
-						.setTitle("移除概要括号（保留内容）")
+						.setTitle(tr("Remove summary bracket (keep content)", "移除概要括号（保留内容）"))
 						.setIcon("brackets")
 						.onClick(() => this.summaryHandle?.removeBracket(summaryRecord.id)));
 				}
 				const groupIds = getGroupIds(canvas);
 				if (this.isMindmapCanvas(canvas) && !groupIds.has(node.id)) {
 					const branchColors = [
-						["1", "Red"],
-						["2", "Orange"],
-						["3", "Yellow"],
-						["4", "Green"],
-						["5", "Blue"],
-						["6", "Purple"],
+						["1", tr("Red", "红")],
+						["2", tr("Orange", "橙")],
+						["3", tr("Yellow", "黄")],
+						["4", tr("Green", "绿")],
+						["5", tr("Blue", "蓝")],
+						["6", tr("Purple", "紫")],
 					] as const;
 					menu.addItem((item) => item
-						.setTitle("Branch color")
+						.setTitle(tr("Branch color", "分支颜色"))
 						.setIcon("palette")
 						.onClick((event) => this.showBranchColorMenu(event, canvas, node.id, branchColors)));
 				}
 
 				if (groupIds.has(node.id)) {
 					menu.addItem((item) => {
-						item.setTitle("Layout forest")
+						item.setTitle(tr("Layout forest", "整理多棵树"))
 							.setIcon("layout-grid")
 							.onClick(() => {
 								this.layoutEngine.layoutForest(canvas, node.id);
@@ -503,7 +490,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 					});
 				} else if (this.isMindmapCanvas(canvas)) {
 					menu.addItem((item) => {
-						item.setTitle("Re-layout selected branch")
+						item.setTitle(tr("Re-layout selected branch", "重新排版选中分支"))
 							.setIcon("list-tree")
 							.onClick(() => {
 								this.relayoutSelectedBranch(canvas, node);
@@ -512,7 +499,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				}
 				if (this.isMindmapCanvas(canvas)) {
 					menu.addItem((item) => item
-						.setTitle("Export as high-quality PDF")
+						.setTitle(tr("Export as high-quality PDF", "导出高清 PDF"))
 						.setIcon("file-down")
 						.onClick(() => {
 							void this.exportMindmapPdf(canvas);
@@ -536,20 +523,20 @@ export default class CanvasMindMapPlugin extends Plugin {
 					canvas = await this.waitForCanvas(canvasPath, leaf.view.containerEl.win);
 				}
 				if (!canvas) {
-					new Notice("Canvas not found");
+					new Notice(tr("Canvas not found", "找不到画布"));
 					return;
 				}
 			}
 
 			canvas ??= this.canvasApi.getActiveCanvas() ?? this.canvasApi.getAnyCanvas();
 			if (!canvas) {
-				new Notice("Canvas not found");
+				new Notice(tr("Canvas not found", "找不到画布"));
 				return;
 			}
 
 			const node = canvas.nodes.get(nodeId);
 			if (!node) {
-				new Notice("Target node not found");
+				new Notice(tr("Target node not found", "找不到目标节点"));
 				return;
 			}
 
@@ -559,7 +546,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Navigation history: back/forward commands
 		this.addCommand({
 			id: "mindmap-nav-back",
-			name: "Navigate back",
+			name: tr("Navigate back", "导航后退"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas || this.navHistoryIndex <= 0) return false;
@@ -569,7 +556,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		});
 		this.addCommand({
 			id: "mindmap-nav-forward",
-			name: "Navigate forward",
+			name: tr("Navigate forward", "导航前进"),
 			checkCallback: (checking: boolean) => {
 				const canvas = this.canvasApi.getActiveCanvas();
 				if (!canvas || this.navHistoryIndex >= this.navHistory.length - 1) return false;
@@ -581,7 +568,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		// Import FreeMind: command palette
 		this.addCommand({
 			id: "mindmap-import-freemind",
-			name: "Import mind map (.mm) file to canvas",
+			name: tr("Import mind map (.mm) file to canvas", "导入思维导图（.mm）到画布"),
 			callback: () => this.importFreeMindFile(),
 		});
 
@@ -868,6 +855,8 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 		// Apply edge label font size CSS variable
 		canvas.wrapperEl.style.setProperty("--cammvas-edge-label-font-size", `${this.settings.edgeLabelFontSize}px`);
+		// Mind-map-only styling (content overflow, hierarchy, edges) keys off this class.
+		canvas.wrapperEl.toggleClass("cammvas-mindmap", this.isMindmapCanvas(canvas));
 
 		// Register after Canvas so Cammvas takes precedence over native node nudging.
 		this.keyboardHandler.registerArrowKeyNavigation(canvas);
@@ -1187,8 +1176,45 @@ export default class CanvasMindMapPlugin extends Plugin {
 		const origUndo = canvas.undo?.bind(canvas);
 		const origRedo = canvas.redo?.bind(canvas);
 		const origSelectOnly = canvas.selectOnly.bind(canvas);
-		this.origCanvasMethods = { requestSave: origSave, createGroupNode: origCreateGroup, undo: origUndo, redo: origRedo, selectOnly: origSelectOnly };
+		const origShowCreationMenu = canvas.showCreationMenu?.bind(canvas);
+		this.origCanvasMethods = {
+			requestSave: origSave,
+			createGroupNode: origCreateGroup,
+			undo: origUndo,
+			redo: origRedo,
+			selectOnly: origSelectOnly,
+			showCreationMenu: origShowCreationMenu,
+		};
 		this.interceptedCanvas = canvas;
+		this.knownNodeIds = new Set(canvas.nodes.keys());
+
+		// Blank-canvas right-click menu: Obsidian has no event for it, so extend
+		// the creation menu it builds.
+		if (origShowCreationMenu) {
+			canvas.showCreationMenu = (menu: Menu, pos: { x: number; y: number }) => {
+				origShowCreationMenu(menu, pos);
+				if (!this.isMindmapCanvas(canvas)) return;
+				menu.addSeparator();
+				menu.addItem((item) => item
+					.setTitle(tr("Create root node", "新建根节点"))
+					.setIcon("circle-plus")
+					.onClick(() => this.createRootNode()));
+				menu.addItem((item) => item
+					.setTitle(tr("Re-layout mind map", "重新排版导图"))
+					.setIcon("layout-template")
+					.onClick(() => {
+						this.layoutEngine.layout(canvas);
+						this.updateGroupBounds(canvas);
+					}));
+				menu.addItem((item) => item
+					.setTitle(tr("Export as high-quality PDF", "导出高清 PDF"))
+					.setIcon("file-down")
+					.setDisabled(canvas.nodes.size === 0)
+					.onClick(() => {
+						void this.exportMindmapPdf(canvas);
+					}));
+			};
+		}
 
 		// Track selection changes for navigation history
 		canvas.selectOnly = (item: CanvasNode | CanvasEdge) => {
@@ -1205,6 +1231,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 			origSave();
 			this.branchCollapseHandle?.refresh();
 			this.summaryHandle?.schedule();
+			this.relayoutAfterNodeRemoval(canvas);
 			this.debouncedOutlineRefresh();
 		};
 		canvas.createGroupNode = (options: CreateNodeOptions & { label?: string }) => {
@@ -1258,6 +1285,34 @@ export default class CanvasMindMapPlugin extends Plugin {
 				view.refresh(canvas);
 			}
 		}
+	}
+
+	/**
+	 * Obsidian's own Delete key bypasses the mind map commands. When a save
+	 * shows that nodes disappeared, close the gap they left behind.
+	 */
+	private relayoutAfterNodeRemoval(canvas: Canvas): void {
+		const ids = new Set(canvas.nodes.keys());
+		const previous = this.knownNodeIds;
+		this.knownNodeIds = ids;
+		if (!previous || this.removalRelayoutPending) return;
+		let removed = false;
+		for (const id of previous) {
+			if (!ids.has(id)) {
+				removed = true;
+				break;
+			}
+		}
+		if (!removed || !this.settings.autoLayoutOnEdit || !this.isMindmapCanvas(canvas)) return;
+		this.removalRelayoutPending = true;
+		this.trackedRaf(canvas.wrapperEl.win, () => {
+			this.removalRelayoutPending = false;
+			if (this.canvasApi.getActiveCanvas() !== canvas) return;
+			this.canvasApi.invalidateEdgeIndex();
+			this.preserveViewport(canvas, () => this.layoutEngine.layout(canvas), "center");
+			this.updateGroupBounds(canvas);
+			this.branchCollapseHandle?.refresh();
+		});
 	}
 
 	/** IDs of selected content nodes (groups excluded). */
@@ -1675,7 +1730,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 				if (!canvasData) {
 					new Notice(
-						"Failed to parse .mm file. Make sure it is a valid mind map file."
+						tr("Failed to parse .mm file. Make sure it is a valid mind map file.", "无法解析 .mm 文件，请确认它是有效的思维导图文件。")
 					);
 					return;
 				}
@@ -1703,7 +1758,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				}
 
 				new Notice(
-					`Imported "${file.name}" as "${canvasPath}"`
+					tr(`Imported "${file.name}" as "${canvasPath}"`, `已将 "${file.name}" 导入为 "${canvasPath}"`)
 				);
 			})();
 		};
@@ -1718,11 +1773,9 @@ export default class CanvasMindMapPlugin extends Plugin {
 	}
 
 	private toggleMindmapMode(canvas: Canvas): void {
-		const data = canvas.getData();
 		const newValue = !this.isMindmapCanvas(canvas);
-		data.mindmap = newValue;
-		canvas.setData(data);
-		canvas.requestSave();
+		writeCanvasDataKey(canvas, "mindmap", newValue);
+		canvas.wrapperEl.toggleClass("cammvas-mindmap", newValue);
 
 		// Re-apply or remove auto-color
 		if (newValue && this.settings.autoColor) {
@@ -1780,58 +1833,14 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 		const btn = controls.createEl('button', { attr: { type: 'button' } });
 		btn.addClass('cammvas-toggle-btn', 'clickable-icon');
-		btn.setAttribute('aria-label', 'Toggle mindmap mode');
 		this.registerDomEvent(btn, 'click', (e) => {
 			e.stopPropagation();
-			this.toggleMindmapMode(canvas);
+			this.showMindmapMenu(btn, canvas);
 		});
 
 		controls.prepend(btn);
 		this.toggleBtnEl = btn;
-
-		const dragBtn = controls.createEl('button', { attr: { type: 'button' } });
-		dragBtn.addClass('cammvas-toggle-btn', 'cammvas-drag-reparent-btn', 'clickable-icon');
-		this.registerDomEvent(dragBtn, 'click', (e) => {
-			e.stopPropagation();
-			if (!canvas.handleSelectionDrag) {
-				new Notice("Drag to reparent is unavailable in this canvas version");
-				return;
-			}
-			this.settings.dragToReparent = !this.settings.dragToReparent;
-			this.updateDragReparentButton(canvas);
-			void this.saveSettings();
-		});
-		btn.after(dragBtn);
-		this.dragReparentBtnEl = dragBtn;
-
-		const autoLayoutOnEditBtn = controls.createEl('button', { attr: { type: 'button' } });
-		autoLayoutOnEditBtn.addClass('cammvas-toggle-btn', 'cammvas-auto-layout-on-edit-btn', 'clickable-icon');
-		this.registerDomEvent(autoLayoutOnEditBtn, 'click', (e) => {
-			e.stopPropagation();
-			this.settings.autoLayoutOnEdit = !this.settings.autoLayoutOnEdit;
-			this.updateAutoLayoutOnEditButton(canvas);
-			void this.saveSettings();
-		});
-		dragBtn.after(autoLayoutOnEditBtn);
-		this.autoLayoutOnEditBtnEl = autoLayoutOnEditBtn;
-
-		const exportPdfBtn = controls.createEl('button', { attr: { type: 'button' } });
-		exportPdfBtn.addClass('cammvas-toggle-btn', 'cammvas-export-pdf-btn', 'clickable-icon');
-		this.registerDomEvent(exportPdfBtn, 'click', (event) => {
-			event.stopPropagation();
-			void this.exportMindmapPdf(canvas);
-		});
-		const layoutBtn = controls.createEl("button", { attr: { type: "button" } });
-		layoutBtn.addClass("cammvas-toggle-btn", "cammvas-layout-btn", "clickable-icon");
-		this.registerDomEvent(layoutBtn, "click", (event) => {
-			event.stopPropagation();
-			this.showLayoutMenu(event, canvas);
-		});
-		autoLayoutOnEditBtn.after(layoutBtn);
-		this.layoutBtnEl = layoutBtn;
-
-		layoutBtn.after(exportPdfBtn);
-		this.exportPdfBtnEl = exportPdfBtn;
+		const exportPdfBtn = btn;
 
 		if (Platform.isMobile) {
 			const actionsBtn = controls.createEl('button', { attr: { type: 'button' } });
@@ -1844,17 +1853,6 @@ export default class CanvasMindMapPlugin extends Plugin {
 			});
 			exportPdfBtn.after(actionsBtn);
 			this.mobileActionsBtnEl = actionsBtn;
-		} else {
-			const enterTabBtn = controls.createEl('button', { attr: { type: 'button' } });
-			enterTabBtn.addClass('cammvas-toggle-btn', 'cammvas-enter-tab-btn', 'clickable-icon');
-			this.registerDomEvent(enterTabBtn, 'click', (event) => {
-				event.stopPropagation();
-				this.settings.enterCreatesSibling = !this.settings.enterCreatesSibling;
-				this.updateEnterTabButton(canvas);
-				void this.saveSettings();
-			});
-			autoLayoutOnEditBtn.after(enterTabBtn);
-			this.enterTabBtnEl = enterTabBtn;
 		}
 
 		this.updateToggleButton(canvas);
@@ -1865,35 +1863,95 @@ export default class CanvasMindMapPlugin extends Plugin {
 		this.updateMobileActionsButton(canvas);
 	}
 
+	/** Everything mind-map related behind one toolbar button. */
+	private showMindmapMenu(anchor: HTMLElement, canvas: Canvas): void {
+		const menu = new Menu();
+		const isMindmap = this.isMindmapCanvas(canvas);
+		menu.addItem((item) => item
+			.setTitle(tr("Mindmap mode", "导图模式"))
+			.setIcon("network")
+			.setChecked(isMindmap)
+			.onClick(() => this.toggleMindmapMode(canvas)));
+		if (isMindmap) {
+			const toggle = (
+				title: string,
+				icon: string,
+				key: "dragToReparent" | "autoLayoutOnEdit" | "enterCreatesSibling",
+				disabled = false
+			): void => {
+				menu.addItem((item) => item
+					.setTitle(title)
+					.setIcon(icon)
+					.setChecked(this.settings[key])
+					.setDisabled(disabled)
+					.onClick(() => {
+						this.settings[key] = !this.settings[key];
+						void this.saveSettings();
+					}));
+			};
+			menu.addSeparator();
+			toggle(tr("Drag to reparent", "拖拽改父节点"), "git-branch", "dragToReparent", !canvas.handleSelectionDrag);
+			toggle(tr("Auto-layout on manual edits", "手动编辑后自动排版"), "layout-grid", "autoLayoutOnEdit");
+			if (!Platform.isMobile) {
+				toggle(tr("Mind mapping Enter and Tab", "导图式 Enter 与 Tab"), "keyboard", "enterCreatesSibling");
+			}
+			menu.addSeparator();
+			for (const [orientation, title, icon] of [
+				["horizontal", tr("Horizontal layout", "横向布局"), "rows-3"],
+				["vertical", tr("Vertical layout", "纵向布局"), "columns-3"],
+			] as const) {
+				menu.addItem((item) => item
+					.setTitle(title)
+					.setIcon(icon)
+					.setDisabled(canvas.nodes.size === 0)
+					.onClick(() => this.applyLayout(canvas, orientation)));
+			}
+			menu.addSeparator();
+			menu.addItem((item) => item
+				.setTitle(tr("Export as high-quality PDF", "导出高清 PDF"))
+				.setIcon("file-down")
+				.setDisabled(canvas.nodes.size === 0)
+				.onClick(() => {
+					void this.exportMindmapPdf(canvas);
+				}));
+			menu.addItem((item) => item
+				.setTitle(tr("Open map outline", "打开导图大纲"))
+				.setIcon("list-tree")
+				.onClick(() => this.showOutline(canvas, true)));
+		}
+		const rect = anchor.getBoundingClientRect();
+		menu.showAtPosition({ x: rect.left, y: rect.bottom + 4 });
+	}
+
 	private showMobileActionsMenu(canvas: Canvas, anchor: HTMLElement): void {
 		const menu = new Menu();
 		const selected = this.canvasApi.getSelectedNode(canvas);
 		const isMindmap = this.isMindmapCanvas(canvas);
 		menu.addItem((item) => item
-			.setTitle("Create root node")
+			.setTitle(tr("Create root node", "新建根节点"))
 			.setIcon("circle-plus")
 			.setDisabled(!isMindmap)
 			.onClick(() => this.createRootNode()));
 		if (selected && isMindmap) {
 			menu.addItem((item) => item
-				.setTitle("Add child node")
+				.setTitle(tr("Add child node", "新建子节点"))
 				.setIcon("corner-down-right")
 				.onClick(() => this.keyboardHandler.addChildNode(canvas, selected)));
 			menu.addItem((item) => item
-				.setTitle("Add sibling node")
+				.setTitle(tr("Add sibling node", "新建兄弟节点"))
 				.setIcon("list-plus")
 				.onClick(() => this.keyboardHandler.addSiblingNode(canvas, selected)));
 			menu.addItem((item) => item
-				.setTitle("Zoom to branch")
+				.setTitle(tr("Zoom to branch", "缩放到分支"))
 				.setIcon("scan")
 				.onClick(() => this.navigation.zoomToBranch(canvas, selected)));
 			menu.addItem((item) => item
-				.setTitle("Re-layout selected branch")
+				.setTitle(tr("Re-layout selected branch", "重新排版选中分支"))
 				.setIcon("list-tree")
 				.onClick(() => this.relayoutSelectedBranch(canvas, selected)));
 		}
 		menu.addItem((item) => item
-			.setTitle("Re-layout mind map")
+			.setTitle(tr("Re-layout mind map", "重新排版导图"))
 			.setIcon("layout-template")
 			.setDisabled(!isMindmap)
 			.onClick(() => {
@@ -1901,14 +1959,14 @@ export default class CanvasMindMapPlugin extends Plugin {
 				this.updateGroupBounds(canvas);
 			}));
 		menu.addItem((item) => item
-			.setTitle("Export as high-quality PDF")
+			.setTitle(tr("Export as high-quality PDF", "导出高清 PDF"))
 			.setIcon("file-down")
 			.setDisabled(!isMindmap || canvas.nodes.size === 0)
 			.onClick(() => {
 				void this.exportMindmapPdf(canvas);
 			}));
 		menu.addItem((item) => item
-			.setTitle("Open map outline")
+			.setTitle(tr("Open map outline", "打开导图大纲"))
 			.setIcon("list-tree")
 			.onClick(() => this.showOutline(canvas, true)));
 		const rect = anchor.getBoundingClientRect();
@@ -1935,8 +1993,8 @@ export default class CanvasMindMapPlugin extends Plugin {
 		if (!this.isMindmapCanvas(canvas)) return;
 		const layoutMenu = new Menu();
 		for (const [orientation, title, icon] of [
-			["horizontal", "Horizontal layout", "rows-3"],
-			["vertical", "Vertical layout", "columns-3"],
+			["horizontal", tr("Horizontal layout", "横向布局"), "rows-3"],
+			["vertical", tr("Vertical layout", "纵向布局"), "columns-3"],
 		] as const) {
 			layoutMenu.addItem((item) => item
 				.setTitle(title)
@@ -1972,7 +2030,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				return new Uint8Array(await this.app.vault.readBinary(file));
 			}, pageSize);
 			if (!pdf) {
-				new Notice("Unable to prepare the PDF export.");
+				new Notice(tr("Unable to prepare the PDF export.", "无法准备 PDF 导出。"));
 				return;
 			}
 			const folder = await this.ensureExportFolder(outputFolder);
@@ -1982,10 +2040,10 @@ export default class CanvasMindMapPlugin extends Plugin {
 				outputPath = `${folder ? `${folder}/` : ""}${safeName} ${index++}.pdf`;
 			}
 			await this.app.vault.createBinary(outputPath, pdf);
-			new Notice(`PDF exported (${pageSize.toUpperCase()}) to ${outputPath}`);
+			new Notice(tr(`PDF exported (${pageSize.toUpperCase()}) to ${outputPath}`, `PDF（${pageSize.toUpperCase()}）已导出到 ${outputPath}`));
 		} catch (error) {
 			console.error("Cammvas PDF export failed", error);
-			new Notice("Unable to export the PDF. Check the developer console for details.");
+			new Notice(tr("Unable to export the PDF. Check the developer console for details.", "PDF 导出失败，详情见开发者控制台。"));
 		}
 	}
 
@@ -2014,7 +2072,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 		setIcon(this.toggleBtnEl, isActive ? 'network' : 'layout-dashboard');
 		this.toggleBtnEl.toggleClass('is-active', isActive);
 		this.toggleBtnEl.setAttribute('aria-label',
-			isActive ? 'Mindmap mode (active)' : 'Mindmap mode (inactive)');
+			isActive ? tr("Mind map (on)", "导图（已开启）") : tr("Mind map (off)", "导图（未开启）"));
 	}
 
 	private updateDragReparentButton(canvas = this.canvasApi.getActiveCanvas()): void {
@@ -2108,16 +2166,16 @@ export default class CanvasMindMapPlugin extends Plugin {
 
 	private relayoutSelectedBranch(canvas: Canvas, branchParent?: CanvasNode): void {
 		if (!this.isMindmapCanvas(canvas)) {
-			new Notice("Enable mindmap mode before re-layout");
+			new Notice(tr("Enable mindmap mode before re-layout", "请先开启导图模式再排版"));
 			return;
 		}
 		const node = branchParent ?? this.canvasApi.getSelectedNode(canvas);
 		if (!node) {
-			new Notice("Select a branch parent before re-layout");
+			new Notice(tr("Select a branch parent before re-layout", "请先选中一个有子分支的节点"));
 			return;
 		}
 		if (this.canvasApi.getChildNodes(canvas, node).length === 0) {
-			new Notice("The selected node has no child branch to re-layout");
+			new Notice(tr("The selected node has no child branch to re-layout", "选中的节点没有可排版的子分支"));
 			return;
 		}
 
@@ -2178,6 +2236,10 @@ export default class CanvasMindMapPlugin extends Plugin {
 			if (this.origCanvasMethods.selectOnly) {
 				this.interceptedCanvas.selectOnly = this.origCanvasMethods.selectOnly;
 			}
+			if (this.origCanvasMethods.showCreationMenu) {
+				this.interceptedCanvas.showCreationMenu = this.origCanvasMethods.showCreationMenu;
+			}
+			this.interceptedCanvas.wrapperEl.removeClass("cammvas-mindmap");
 		}
 		this.interceptedCanvas = null;
 		this.origCanvasMethods = {};
@@ -2236,11 +2298,11 @@ export default class CanvasMindMapPlugin extends Plugin {
 	private createRootNode(): void {
 		const canvas = this.canvasApi?.getActiveCanvas();
 		if (!canvas) {
-			new Notice("Open a canvas before creating a root node");
+			new Notice(tr("Open a canvas before creating a root node", "请先打开一个画布再新建根节点"));
 			return;
 		}
 		if (!this.isMindmapCanvas(canvas)) {
-			new Notice("Enable mindmap mode before creating a root node");
+			new Notice(tr("Enable mindmap mode before creating a root node", "请先开启导图模式再新建根节点"));
 			return;
 		}
 

@@ -279,3 +279,42 @@ export function reconcileSummaryRecords(
 	}
 	return { records: kept, removals, changed };
 }
+
+type PointMapper = (x: number, y: number) => [number, number];
+const identity: PointMapper = (x, y) => [x, y];
+
+/**
+ * SVG path of a curly brace filling the rect. On the right side the brace opens
+ * toward the members on its left and points right, like XMind; "left" mirrors it.
+ * `map` converts canvas coordinates into the target coordinate space.
+ */
+export function summaryBracePath(rect: Omit<Rect, "id">, side: SummarySide, map: PointMapper = identity): string {
+	const { x, y, width: w, height: h } = rect;
+	const r = Math.min(12, h / 4, w);
+	const cy = y + h / 2;
+	const spine = x + w / 2;
+	const open = side === "right" ? x : x + w;
+	const tip = side === "right" ? x + w : x;
+	const p = (px: number, py: number): string => map(px, py).join(" ");
+	return [
+		`M ${p(open, y)}`,
+		`Q ${p(spine, y)} ${p(spine, y + r)}`,
+		`L ${p(spine, cy - r)}`,
+		`Q ${p(spine, cy)} ${p(tip, cy)}`,
+		`Q ${p(spine, cy)} ${p(spine, cy + r)}`,
+		`L ${p(spine, y + h - r)}`,
+		`Q ${p(spine, y + h)} ${p(open, y + h)}`,
+	].join(" ");
+}
+
+/** Endpoints of the line from the brace tip to the summary content node. */
+export function summaryConnector(
+	bracket: Omit<Rect, "id">,
+	summary: Omit<Rect, "id">,
+	side: SummarySide
+): { from: { x: number; y: number }; to: { x: number; y: number } } {
+	return {
+		from: { x: side === "right" ? bracket.x + bracket.width : bracket.x, y: bracket.y + bracket.height / 2 },
+		to: { x: side === "right" ? summary.x : summary.x + summary.width, y: summary.y + summary.height / 2 },
+	};
+}

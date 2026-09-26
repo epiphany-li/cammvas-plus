@@ -3,6 +3,7 @@ import type { Canvas, CanvasNode, CanvasNodeFileData, CanvasView as CanvasViewTy
 import { buildForest, TreeNode, getDescendants, getGroupIds, getNodeTitle, findTreeForNode } from "../mindmap/tree-model";
 import { getSummaryRecords } from "../summary/summary-controller";
 import { copyText } from "./clipboard";
+import { tr } from "../i18n";
 
 export const OUTLINE_VIEW_TYPE = "cammvas-plus-outline";
 
@@ -21,6 +22,8 @@ export class OutlineView extends ItemView {
 	private canvasLeaf: WorkspaceLeaf | null = null;
 	private collapsedGroups = new Set<string>();
 	private collapsedNodes = new Set<string>();
+	/** Canvas-collapsed branches seen at the last refresh, to mirror changes into the outline. */
+	private lastCanvasCollapsed = new Set<string>();
 	private selectedRoots = new Set<TreeNode>();
 	private lastCanvas: Canvas | null = null;
 	private groupIds: string[] = [];
@@ -57,7 +60,7 @@ export class OutlineView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return "Map outline";
+		return tr("Map outline", "导图大纲");
 	}
 
 	getIcon(): string {
@@ -96,7 +99,7 @@ export class OutlineView extends ItemView {
 		// Collapse all / expand all button
 		this.collapseBtnEl = navButtons.createDiv({
 			cls: "clickable-icon nav-action-button",
-			attr: { "aria-label": "Collapse all" },
+			attr: { "aria-label": tr("Collapse all", "全部折叠") },
 		});
 		setIcon(this.collapseBtnEl, "chevrons-down-up");
 		this.collapseBtnEl.addEventListener("click", () => {
@@ -115,7 +118,7 @@ export class OutlineView extends ItemView {
 		this.searchContainerEl = navHeader.createDiv({ cls: "cammvas-outline-search-container" });
 		this.searchContainerEl.hide();
 		this.searchComponent = new SearchComponent(this.searchContainerEl);
-		this.searchComponent.setPlaceholder("Filter...");
+		this.searchComponent.setPlaceholder(tr("Filter...", "筛选…"));
 		this.searchComponent.onChange((value) => {
 			this.searchQuery = value;
 			this.applyFilter();
@@ -163,7 +166,17 @@ export class OutlineView extends ItemView {
 		this.selectedRoots.clear();
 		this.groupElMap.clear();
 		this.allItemEls.clear();
+		if (this.lastCanvas !== canvas) this.lastCanvasCollapsed = new Set();
 		this.lastCanvas = canvas;
+		// Follow collapse/expand done on the canvas, keep outline-only toggles otherwise.
+		const canvasCollapsed = new Set(canvas.getData().mindmapCollapsed ?? []);
+		for (const id of canvasCollapsed) {
+			if (!this.lastCanvasCollapsed.has(id)) this.collapsedNodes.add(id);
+		}
+		for (const id of this.lastCanvasCollapsed) {
+			if (!canvasCollapsed.has(id)) this.collapsedNodes.delete(id);
+		}
+		this.lastCanvasCollapsed = canvasCollapsed;
 		this.nodeDataById = new Map(canvas.getData().nodes.map((node) => [node.id, node]));
 
 		// Store the canvas leaf for click navigation
@@ -175,11 +188,19 @@ export class OutlineView extends ItemView {
 			this.searchComponent.setValue(this.searchQuery);
 		}
 
-		const forest = this.attachSummaries(canvas, buildForest(canvas));
+		const forest = buildForest(canvas);
+		// Read like the map: right-side branches first, then left-side ones.
+		for (const root of forest) {
+			root.children.sort((a, b) =>
+				Number(a.direction === "left") - Number(b.direction === "left")
+				|| a.canvasNode.y - b.canvasNode.y
+			);
+		}
+		this.attachSummaries(canvas, forest);
 		if (forest.length === 0) {
 			this.contentEl.createDiv({
 				cls: "cammvas-outline-empty",
-				text: "No root nodes",
+				text: tr("No root nodes", "没有根节点"),
 			});
 			return;
 		}
@@ -193,7 +214,7 @@ export class OutlineView extends ItemView {
 			if (!node) continue;
 			groups.push({
 				node,
-				label: (nd.label || "").trim() || "Untitled Group",
+				label: (nd.label || "").trim() || tr("Untitled Group", "未命名分组"),
 				area: node.width * node.height,
 				roots: [],
 			});
@@ -270,7 +291,7 @@ export class OutlineView extends ItemView {
 			&& this.groupIds.every(id => this.collapsedGroups.has(id));
 		if (this.collapseBtnEl) {
 			setIcon(this.collapseBtnEl, allCollapsed ? "chevrons-up-down" : "chevrons-down-up");
-			this.collapseBtnEl.setAttribute("aria-label", allCollapsed ? "Expand all" : "Collapse all");
+			this.collapseBtnEl.setAttribute("aria-label", allCollapsed ? tr("Expand all", "全部展开") : tr("Collapse all", "全部折叠"));
 		}
 
 		if (this.searchQuery) this.applyFilter();
@@ -412,14 +433,14 @@ export class OutlineView extends ItemView {
 			e.preventDefault();
 			const menu = new Menu();
 			menu.addItem((item) => {
-				item.setTitle("Copy node link")
+				item.setTitle(tr("Copy node link", "复制节点链接"))
 					.setIcon("link")
 					.onClick(() => {
 						const canvasPath = canvas.view.file.path;
 						void copyText(
 							self.win,
 							`obsidian://cammvas-plus-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${root.canvasNode.id}`,
-							"Node link copied"
+							tr("Node link copied", "已复制节点链接")
 						);
 					});
 			});
@@ -431,7 +452,7 @@ export class OutlineView extends ItemView {
 				}
 				const count = this.selectedRoots.size;
 				menu.addItem((item) => {
-					item.setTitle(`Create group (${count} root${count > 1 ? "s" : ""})`)
+					item.setTitle(tr(`Create group (${count} root${count > 1 ? "s" : ""})`, `创建分组（${count} 个根节点）`))
 						.setIcon("group")
 						.onClick(() => this.createGroupFromSelection());
 				});
@@ -465,7 +486,9 @@ export class OutlineView extends ItemView {
 			attached.add(record.summaryNodeId);
 			this.summaryNodeIds.add(record.summaryNodeId);
 		}
-		return forest.filter((root) => !attached.has(root.canvasNode.id));
+		const kept = forest.filter((root) => !attached.has(root.canvasNode.id));
+		forest.splice(0, forest.length, ...kept);
+		return forest;
 	}
 
 	private renderChildItem(container: HTMLElement, node: TreeNode, canvas: Canvas): void {
@@ -499,14 +522,14 @@ export class OutlineView extends ItemView {
 			e.preventDefault();
 			const menu = new Menu();
 			menu.addItem((item) => {
-				item.setTitle("Copy node link")
+				item.setTitle(tr("Copy node link", "复制节点链接"))
 					.setIcon("link")
 					.onClick(() => {
 						const canvasPath = canvas.view.file.path;
 						void copyText(
 							self.win,
 							`obsidian://cammvas-plus-navigate?canvas=${encodeURIComponent(canvasPath)}&id=${node.canvasNode.id}`,
-							"Node link copied"
+							tr("Node link copied", "已复制节点链接")
 						);
 					});
 			});
@@ -743,12 +766,12 @@ export class OutlineView extends ItemView {
 			e.preventDefault();
 			const menu = new Menu();
 			menu.addItem((item) => {
-				item.setTitle("Rename group")
+				item.setTitle(tr("Rename group", "重命名分组"))
 					.setIcon("pencil")
 					.onClick(() => this.startGroupRename(labelSpan, group, canvas));
 			});
 			menu.addItem((item) => {
-				item.setTitle("Layout forest")
+				item.setTitle(tr("Layout forest", "整理多棵树"))
 					.setIcon("layout-grid")
 					.onClick(() => {
 						if (this.lastCanvas && this.onForestLayout) {
@@ -830,18 +853,24 @@ export class OutlineView extends ItemView {
 		const commit = () => {
 			if (done) return;
 			done = true;
-			const newLabel = (labelSpan.textContent ?? "").trim() || "Untitled Group";
+			const newLabel = (labelSpan.textContent ?? "").trim() || tr("Untitled Group", "未命名分组");
 			labelSpan.contentEditable = "false";
 			labelSpan.textContent = newLabel;
 			cleanup();
 
 			if (newLabel === originalText) return;
 
-			const data = canvas.getData();
-			const nodeData = data.nodes.find(n => n.id === group.node.id);
-			if (nodeData) {
-				nodeData.label = newLabel;
-				canvas.setData(data);
+			if (group.node.setLabel) {
+				// Rename in place instead of rebuilding the whole canvas.
+				group.node.setLabel(newLabel);
+				canvas.requestSave();
+			} else {
+				const data = canvas.getData();
+				const nodeData = data.nodes.find(n => n.id === group.node.id);
+				if (nodeData) {
+					nodeData.label = newLabel;
+					canvas.setData(data);
+				}
 			}
 		};
 
@@ -897,7 +926,7 @@ export class OutlineView extends ItemView {
 		this.contentEl.empty();
 		this.contentEl.createDiv({
 			cls: "cammvas-outline-empty",
-			text: "Open a canvas to see root nodes",
+			text: tr("Open a canvas to see root nodes", "打开画布以查看根节点"),
 		});
 	}
 }

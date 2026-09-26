@@ -6,6 +6,7 @@ import {
 	SummaryGraph,
 	SummaryRecord,
 	collectCoveredIds,
+	summaryBracePath,
 	computeSummaryGeometry,
 	readSummaryRecords,
 	reconcileSummaryRecords,
@@ -202,5 +203,26 @@ describe("reconcileSummaryRecords", () => {
 		const result = reconcileSummaryRecords(graph, [record()]);
 		expect(result.records).toEqual([]);
 		expect(result.removals).toHaveLength(1);
+	});
+});
+
+describe("summaryBracePath", () => {
+	it("starts at the open side, points to the tip at mid-height and ends at the bottom", () => {
+		const path = summaryBracePath({ x: 0, y: 0, width: 24, height: 100 }, "right");
+		expect(path.startsWith("M 0 0")).toBe(true);
+		expect(path).toContain("24 50");
+		expect(path.endsWith("0 100")).toBe(true);
+	});
+
+	it("mirrors for the left side", () => {
+		const path = summaryBracePath({ x: 0, y: 0, width: 24, height: 100 }, "left");
+		expect(path.startsWith("M 24 0")).toBe(true);
+		expect(path).toContain("0 50");
+	});
+
+	it("applies the coordinate mapper", () => {
+		const path = summaryBracePath({ x: 0, y: 0, width: 24, height: 100 }, "right", (x, y) => [x + 1, -y]);
+		expect(path.startsWith("M 1 0")).toBe(true);
+		expect(path.endsWith("1 -100")).toBe(true);
 	});
 });

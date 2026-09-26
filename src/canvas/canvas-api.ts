@@ -4,6 +4,8 @@ import type {
 	CanvasView,
 	CanvasNode,
 	CanvasEdge,
+	CMContentElement,
+	CMEditorView,
 	NodeSide,
 } from "../types/canvas-internal";
 import { isHtmlElement } from "../ui/dom";
@@ -17,6 +19,36 @@ import { isRectFullyVisible } from "../ui/spatial-navigation";
 export function writeCanvasDataKey(canvas: Canvas, key: string, value: unknown): void {
 	canvas.data = { ...(canvas.data ?? {}), [key]: value };
 	canvas.requestSave();
+}
+
+/** The CodeMirror view of a node that is currently being edited. */
+export function getNodeEditorView(node: CanvasNode): CMEditorView | null {
+	const iframe = node.contentEl?.querySelector<HTMLIFrameElement>("iframe");
+	const container = iframe?.contentDocument ?? node.contentEl;
+	const cmContent = container?.querySelector<CMContentElement>(".cm-content");
+	return cmContent?.cmView?.view ?? null;
+}
+
+/**
+ * Start editing with the cursor after the last character, the way outliners
+ * and XMind do, instead of CodeMirror's default position at the start.
+ */
+export function startEditingAtEnd(node: CanvasNode, selectAll = false): void {
+	node.startEditing();
+	const win = node.nodeEl?.win ?? node.canvas?.wrapperEl?.win;
+	if (!win) return;
+	let attempts = 0;
+	const placeCursor = (): void => {
+		const view = node.isEditing ? getNodeEditorView(node) : null;
+		if (!view) {
+			if (node.isEditing && ++attempts < 20) win.requestAnimationFrame(placeCursor);
+			return;
+		}
+		const end = view.state.doc.length;
+		view.dispatch({ selection: selectAll ? { anchor: 0, head: end } : { anchor: end } });
+		view.focus?.();
+	};
+	win.requestAnimationFrame(placeCursor);
 }
 
 interface EdgeIndex {
@@ -307,7 +339,7 @@ export class CanvasAPI {
 		// visible and only move it far enough to reveal an off-screen target.
 		this.selectAndReveal(canvas, node, zoomPadding);
 		if (immediate) {
-			node.startEditing();
+			startEditingAtEnd(node);
 			return;
 		}
 		canvas.wrapperEl.win.setTimeout(() => {
@@ -319,7 +351,7 @@ export class CanvasAPI {
 				|| !node.nodeEl?.isConnected
 				|| !canvas.selection.has(node)
 			) return;
-			node.startEditing();
+			startEditingAtEnd(node);
 		}, 50);
 	}
 

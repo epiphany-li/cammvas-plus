@@ -373,55 +373,43 @@
 	font-size: 0 !important;
 }
 
-.canvas-node.cammvas-summary-bracket > * {
+.canvas-node.cammvas-summary-bracket > :not(svg.cammvas-summary-brace) {
 	visibility: hidden !important;
 }
 
-.canvas-node.cammvas-summary-bracket::after {
-	content: "";
+.canvas-node.cammvas-summary-bracket > svg.cammvas-summary-brace {
 	position: absolute;
 	inset: 0;
-	box-sizing: border-box;
-	pointer-events: none;
-	z-index: 5;
-	border: 2px solid var(--text-muted);
-}
-
-.canvas-node.cammvas-summary-bracket.is-right::after {
-	border-left: 0;
-	border-radius: 0 6px 6px 0;
-}
-
-.canvas-node.cammvas-summary-bracket.is-left::after {
-	border-right: 0;
-	border-radius: 6px 0 0 6px;
-}
-
-/* Connector from the bracket's midpoint to the summary content node. */
-.canvas-node.cammvas-summary-bracket::before {
-	content: "";
-	position: absolute;
-	top: 50%;
-	width: var(--cammvas-summary-line-length, 56px);
-	border-top: 2px solid var(--text-muted);
-	transform: rotate(var(--cammvas-summary-line-angle, 0rad));
-	transform-origin: 0 50%;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
 	pointer-events: none;
 	z-index: 5;
 }
 
-.canvas-node.cammvas-summary-bracket.is-right::before {
-	left: 100%;
-}
-
-.canvas-node.cammvas-summary-bracket.is-left::before {
-	left: 0;
+.cammvas-summary-brace path {
+	fill: none;
+	stroke: var(--cammvas-summary-stroke, var(--text-muted));
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
 }
 
 .canvas-node.cammvas-summary-bracket .canvas-node-resizer,
 .canvas-node.cammvas-summary-bracket .canvas-node-connection-point,
 .canvas-node.cammvas-summary-bracket .cammvas-canvas-collapse-button {
 	display: none !important;
+}
+
+/* Summary content reads as an annotation of its range, not another branch. */
+.canvas-node.cammvas-summary-content > .canvas-node-container {
+	border-style: dashed;
+	background-color: var(--background-secondary);
+}
+
+.canvas-node.cammvas-summary-content .markdown-rendered {
+	color: var(--text-muted);
+	font-style: italic;
 }
 
 .canvas-wrapper .cammvas-summary-hidden {
@@ -436,4 +424,13 @@
 	background: var(--background-modifier-hover);
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
+}
+
+/* Drag-to-reparent: let the drop target show through the dragged card. */
+.canvas-node.cammvas-reparent-dragged {
+	opacity: 0.45;
+}
+
+.canvas-wrapper.cammvas-reparenting .canvas-snaps {
+	display: none;
 }

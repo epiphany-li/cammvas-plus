@@ -1,6 +1,7 @@
 import { setIcon } from "obsidian";
 import type { Canvas, CanvasNode } from "../types/canvas-internal";
 import { getMobileEditingNode } from "./mobile-editing-state";
+import { tr } from "../i18n";
 
 export interface MobileEditingBarHandle {
 	cleanup: () => void;
@@ -20,7 +21,7 @@ export function registerMobileEditingBar(
 	const bar = doc.body.createDiv({ cls: "cammvas-mobile-editing-bar" });
 	bar.hidden = true;
 	bar.setAttribute("role", "toolbar");
-	bar.setAttribute("aria-label", "Node editing actions");
+	bar.setAttribute("aria-label", tr("Node editing actions", "节点编辑操作"));
 
 	const createButton = (label: string, icon: string): HTMLButtonElement => {
 		const button = bar.createEl("button", {
@@ -37,11 +38,11 @@ export function registerMobileEditingBar(
 	const siblingButton = createButton("Sibling", "list-plus");
 	const doneButton = bar.createEl("button", {
 		cls: "cammvas-mobile-editing-action cammvas-mobile-editing-done",
-		attr: { type: "button", "aria-label": "Finish editing node" },
+		attr: { type: "button", "aria-label": tr("Finish editing node", "结束编辑") },
 	});
 	const doneIcon = doneButton.createSpan({ cls: "cammvas-mobile-editing-action-icon" });
 	setIcon(doneIcon, "check");
-	doneButton.createSpan({ text: "Done" });
+	doneButton.createSpan({ text: tr("Done", "完成") });
 
 	let activeNode: CanvasNode | null = null;
 	let refreshRaf = 0;

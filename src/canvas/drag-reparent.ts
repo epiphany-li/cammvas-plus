@@ -10,6 +10,10 @@ import {
 import { getGroupIds } from "../mindmap/tree-model";
 
 const DROP_TARGET_CLASS = "cammvas-reparent-drop-target";
+/** On the dragged nodes while they hover a drop target, so the target shows through. */
+const DRAGGED_CLASS = "cammvas-reparent-dragged";
+/** On the canvas wrapper while a reparent drop is pending (hides snap guides). */
+const REPARENTING_CLASS = "cammvas-reparenting";
 
 export function registerDragReparent(
 	canvas: Canvas,
@@ -117,7 +121,16 @@ export function registerDragReparent(
 			clearHighlight();
 			target?.nodeEl.addClass(DROP_TARGET_CLASS);
 			highlighted = target;
+			setDraggingFeedback(!!target);
 			return target;
+		};
+		const setDraggingFeedback = (active: boolean): void => {
+			canvas.wrapperEl?.toggleClass(REPARENTING_CLASS, active);
+			for (const node of draggedNodes) node.nodeEl?.toggleClass(DRAGGED_CLASS, active);
+		};
+		const clearDragState = (): void => {
+			clearHighlight();
+			setDraggingFeedback(false);
 		};
 
 		const originalMove = handler.move;
@@ -134,7 +147,7 @@ export function registerDragReparent(
 				&& eligible
 				&& hasEligiblePointer(endEvent);
 			const target = shouldCommit ? updateHighlight(endEvent) : null;
-			clearHighlight();
+			clearDragState();
 			const duplicating = Platform.isMacOS ? endEvent.altKey : endEvent.ctrlKey;
 			try {
 				if (target && isEnabled() && !duplicating) onReparent(draggedNodes, target);
@@ -143,11 +156,11 @@ export function registerDragReparent(
 			}
 		};
 		handler.cancel = () => {
-			clearHighlight();
+			clearDragState();
 			originalCancel?.call(handler);
 		};
 		handler.cleanup = () => {
-			clearHighlight();
+			clearDragState();
 			originalCleanup?.call(handler);
 		};
 
