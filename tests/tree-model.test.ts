@@ -98,3 +98,36 @@ describe("getNodeTitle", () => {
 		})).toBe("Meeting notes");
 	});
 });
+
+describe("buildForest graph safety", () => {
+	it("ignores an edge that points back to an ancestor", () => {
+		const a = node("a", 0, 0);
+		const b = node("b", 200, 0);
+		const c = node("c", 400, 0);
+		const forest = buildForest(canvas([a, b, c], [[a, b], [b, c], [c, b]]));
+		expect(forest.map((root) => root.canvasNode.id)).toEqual(["a"]);
+		expect(getDescendants(forest[0]).map((item) => item.canvasNode.id)).toEqual(["b", "c"]);
+		expect(findTreeForNode(forest, "c")?.depth).toBe(2);
+	});
+
+	it("breaks a pure cycle at its top-most node", () => {
+		const a = node("a", 0, 100);
+		const b = node("b", 200, 0);
+		const forest = buildForest(canvas([a, b], [[a, b], [b, a]]));
+		expect(forest.map((root) => root.canvasNode.id)).toEqual(["b"]);
+		expect(forest[0].children.map((child) => child.canvasNode.id)).toEqual(["a"]);
+	});
+
+	it("keeps a node with two parents under only one of them", () => {
+		const root = node("root", 0, 0);
+		const p1 = node("p1", 200, -100);
+		const p2 = node("p2", 200, 100);
+		const shared = node("shared", 400, 0);
+		const forest = buildForest(canvas(
+			[root, p1, p2, shared],
+			[[root, p1], [root, p2], [p1, shared], [p2, shared]]
+		));
+		const all = getDescendants(forest[0]).map((item) => item.canvasNode.id);
+		expect(all.filter((id) => id === "shared")).toHaveLength(1);
+	});
+});

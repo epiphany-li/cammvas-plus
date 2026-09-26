@@ -10,6 +10,22 @@ interface ResizeState {
 export interface NodeResizeResult {
 	nodes: CanvasNode[];
 	widthChangedNodeIds: ReadonlySet<string>;
+	heightChangedNodeIds: ReadonlySet<string>;
+}
+
+/** Node data key holding a height the user chose by dragging the resize handle. */
+export const MANUAL_MIN_HEIGHT_KEY = "cammvasMinHeight";
+
+/** Height the user set manually, or 0 when the node follows its content. */
+export function getManualMinHeight(node: CanvasNode): number {
+	const value = node.unknownData?.[MANUAL_MIN_HEIGHT_KEY];
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function setManualMinHeight(node: CanvasNode, height: number | null): void {
+	if (!node.unknownData) return;
+	if (height === null) delete node.unknownData[MANUAL_MIN_HEIGHT_KEY];
+	else node.unknownData[MANUAL_MIN_HEIGHT_KEY] = Math.round(height);
 }
 
 /** Propagate a manually chosen width to every node at the same tree depth. */
@@ -98,10 +114,14 @@ export function registerNodeResizeHandler(
 			if (!isEnabled()) return;
 			const resizedNodes: CanvasNode[] = [];
 			const widthChangedNodeIds = new Set<string>();
+			const heightChangedNodeIds = new Set<string>();
 			for (const [nodeId, size] of state.sizes) {
 				const node = canvas.nodes.get(nodeId);
 				if (node && Math.abs(node.width - size.width) >= 1) {
 					widthChangedNodeIds.add(node.id);
+				}
+				if (node && Math.abs(node.height - size.height) >= 1) {
+					heightChangedNodeIds.add(node.id);
 				}
 				if (
 					node
@@ -112,6 +132,7 @@ export function registerNodeResizeHandler(
 			if (resizedNodes.length > 0) onSettled({
 				nodes: resizedNodes,
 				widthChangedNodeIds,
+				heightChangedNodeIds,
 			});
 		});
 	};

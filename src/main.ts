@@ -18,7 +18,12 @@ import { registerSubtreeDragHandler } from "./canvas/subtree-drag";
 import { registerDragReparent } from "./canvas/drag-reparent";
 import { registerGroupDragHandler } from "./canvas/group-drag";
 import { registerAutoLayoutOnMove } from "./canvas/auto-layout-on-move";
-import { registerNodeResizeHandler, syncWidthsAtSameDepth } from "./canvas/node-resize";
+import {
+	registerNodeResizeHandler,
+	syncWidthsAtSameDepth,
+	getManualMinHeight,
+	setManualMinHeight,
+} from "./canvas/node-resize";
 import { createMindmapPdf } from "./export/pdf-export";
 import { PdfExportModal } from "./export/pdf-export-modal";
 import { registerBranchCollapse, BranchCollapseHandle } from "./canvas/branch-collapse";
@@ -304,7 +309,9 @@ export default class CanvasMindMapPlugin extends Plugin {
 				if (checking) return true;
 				const wasEditing = node.isEditing;
 				this.preserveViewport(canvas, () => {
-					this.resizeNodes(canvas, this.collectSubtreeNodes(canvas, node));
+					const subtree = this.collectSubtreeNodes(canvas, node);
+					for (const item of subtree) setManualMinHeight(item, null);
+					this.resizeNodes(canvas, subtree);
 					this.layoutEngine.layout(canvas);
 					this.updateGroupBounds(canvas);
 				});
@@ -323,6 +330,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				if (canvas.nodes.size === 0) return false;
 				if (checking) return true;
 				this.preserveViewport(canvas, () => {
+					for (const item of canvas.nodes.values()) setManualMinHeight(item, null);
 					this.resizeNodes(canvas, Array.from(canvas.nodes.values()));
 					this.layoutEngine.layout(canvas);
 					this.updateGroupBounds(canvas);
@@ -919,11 +927,17 @@ export default class CanvasMindMapPlugin extends Plugin {
 			() => this.settings.autoLayoutOnEdit
 				&& this.isMindmapCanvas(canvas)
 				&& this.canvasApi.getActiveCanvas() === canvas,
-			({ nodes: resizedNodes, widthChangedNodeIds }) => {
-				const widthChangedNodes = resizedNodes.filter((node) => widthChangedNodeIds.has(node.id));
+			({ nodes: resizedNodes, widthChangedNodeIds, heightChangedNodeIds }) => {
+				// A height dragged by hand becomes the node's floor; content can still grow it.
+				for (const node of resizedNodes) {
+					if (heightChangedNodeIds.has(node.id)) setManualMinHeight(node, node.height);
+				}
 				const affectedNodes = new Map(resizedNodes.map((node) => [node.id, node]));
-				for (const node of syncWidthsAtSameDepth(canvas, widthChangedNodes)) {
-					affectedNodes.set(node.id, node);
+				if (this.settings.syncSameDepthWidth) {
+					const widthChangedNodes = resizedNodes.filter((node) => widthChangedNodeIds.has(node.id));
+					for (const node of syncWidthsAtSameDepth(canvas, widthChangedNodes)) {
+						affectedNodes.set(node.id, node);
+					}
 				}
 				const skipAnimationNodeIds = new Set(canvas.nodes.keys());
 				this.preserveViewport(canvas, () => {
@@ -1535,7 +1549,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				desiredH = this.measurePreviewContentHeight(node, sizer);
 			}
 			if (desiredH === null) continue;
-			const targetH = Math.max(desiredH, minH);
+			const targetH = Math.max(desiredH, minH, getManualMinHeight(node));
 			if (targetH === node.height) continue;
 			node.moveAndResize({ x: node.x, y: node.y, width: node.width, height: targetH });
 			changed = true;

@@ -167,7 +167,7 @@ export class LayoutEngine {
 		parentNodeId: string,
 		skipAnimationNodeIds: ReadonlySet<string> = new Set()
 	): void {
-		const forest = buildForest(canvas);
+		const forest = buildForest(canvas, true);
 		if (forest.length === 0) return;
 
 		const parentTreeNode = findTreeForNode(forest, parentNodeId);
@@ -564,6 +564,7 @@ export class LayoutEngine {
 		positions: Map<string, NodePosition>,
 		skipAnimationNodeIds: ReadonlySet<string> = new Set()
 	): void {
+		let moved = false;
 		for (const [nodeId, pos] of positions) {
 			const node = canvas.nodes.get(nodeId);
 			if (!node) continue;
@@ -574,11 +575,15 @@ export class LayoutEngine {
 				node.nodeEl?.removeClass("mindmap-animating");
 			}
 
-			node.moveTo({ x: pos.x, y: pos.y });
+			if (Math.abs(node.x - pos.x) > 0.5 || Math.abs(node.y - pos.y) > 0.5) {
+				node.moveTo({ x: pos.x, y: pos.y });
+				moved = true;
+			}
 		}
 
 		this.afterApply?.(canvas);
-		canvas.requestSave();
+		// Skip the save when nothing moved, so merely viewing a map never rewrites the file.
+		if (moved) canvas.requestSave();
 		canvas.requestFrame();
 
 		// Remove animation class after transition completes

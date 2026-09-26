@@ -69,37 +69,59 @@ export function buildForest(canvas: Canvas, respectCollapsed = false): TreeNode[
 		});
 	}
 
-	// Build parent-child relationships from edges
+	// Candidate children per parent, sorted by y-position for consistent ordering
+	const childLists = new Map<string, TreeNode[]>();
 	for (const edge of canvas.edges.values()) {
 		const parentTree = nodeMap.get(edge.from.node.id);
 		const childTree = nodeMap.get(edge.to.node.id);
-		if (parentTree && childTree) {
-			childTree.parent = parentTree;
-			parentTree.children.push(childTree);
-		}
+		if (!parentTree || !childTree) continue;
+		const list = childLists.get(parentTree.canvasNode.id) ?? [];
+		list.push(childTree);
+		childLists.set(parentTree.canvasNode.id, list);
+	}
+	for (const list of childLists.values()) {
+		list.sort((a, b) => a.canvasNode.y - b.canvasNode.y);
 	}
 
-	// Sort children by y-position for consistent ordering
-	for (const treeNode of nodeMap.values()) {
-		treeNode.children.sort(
-			(a, b) => a.canvasNode.y - b.canvasNode.y
-		);
-		treeNode.children.forEach((child, i) => {
-			child.siblingIndex = i;
-		});
-	}
+	// Attach children breadth-first. A node reached a second time (a cycle or a
+	// second parent) is skipped, so every node belongs to exactly one tree.
+	const attached = new Set<string>();
+	const attachTree = (root: TreeNode): void => {
+		attached.add(root.canvasNode.id);
+		root.depth = 0;
+		const queue = [root];
+		while (queue.length > 0) {
+			const parent = queue.shift()!;
+			for (const child of childLists.get(parent.canvasNode.id) ?? []) {
+				if (attached.has(child.canvasNode.id)) continue;
+				attached.add(child.canvasNode.id);
+				child.parent = parent;
+				child.depth = parent.depth + 1;
+				child.siblingIndex = parent.children.length;
+				parent.children.push(child);
+				queue.push(child);
+			}
+		}
+		assignDirections(root);
+	};
 
 	// Collect all roots: nodes with no incoming edges
 	const roots: TreeNode[] = [];
 	for (const node of canvas.nodes.values()) {
-		if (!childIds.has(node.id) && visibleNodeIds.has(node.id)) {
-			const treeNode = nodeMap.get(node.id);
-			if (treeNode) {
-				setDepths(treeNode, 0);
-				assignDirections(treeNode);
-				roots.push(treeNode);
-			}
-		}
+		if (childIds.has(node.id)) continue;
+		const treeNode = nodeMap.get(node.id);
+		if (!treeNode) continue;
+		attachTree(treeNode);
+		roots.push(treeNode);
+	}
+	// Nodes left over form pure cycles; break each at its top-most node.
+	const leftovers = [...nodeMap.values()]
+		.filter((treeNode) => !attached.has(treeNode.canvasNode.id))
+		.sort((a, b) => a.canvasNode.y - b.canvasNode.y);
+	for (const treeNode of leftovers) {
+		if (attached.has(treeNode.canvasNode.id)) continue;
+		attachTree(treeNode);
+		roots.push(treeNode);
 	}
 
 	// Sort by descending subtree size (largest first)
@@ -155,13 +177,6 @@ function countReachable(node: TreeNode): number {
 		count += countReachable(child);
 	}
 	return count;
-}
-
-function setDepths(node: TreeNode, depth: number): void {
-	node.depth = depth;
-	for (const child of node.children) {
-		setDepths(child, depth + 1);
-	}
 }
 
 /**
