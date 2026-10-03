@@ -75,6 +75,7 @@ export function registerAutoResize(
 	let observer: MutationObserver | null = null;
 	let inputHandler: (() => void) | null = null;
 	let keydownHandler: ((event: KeyboardEvent) => void) | null = null;
+	let wheelHandler: ((event: WheelEvent) => void) | null = null;
 	/** Cached DOM refs to avoid querySelector on every keystroke */
 	let cachedCmContent: HTMLElement | null = null;
 	let cachedScroller: HTMLElement | null = null;
@@ -167,6 +168,21 @@ export function registerAutoResize(
 			if (event.key === "Enter") onTextChange?.(canvas, node);
 		};
 		cachedInputTarget.addEventListener("keydown", keydownHandler, true);
+		// Mind map cards never scroll internally, and wheel events inside the
+		// editor iframe never reach the canvas, so pan or zoom the canvas here.
+		wheelHandler = (event: WheelEvent) => {
+			event.preventDefault();
+			const unit = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 800 : 1;
+			let dx = event.deltaX * unit;
+			let dy = event.deltaY * unit;
+			if (event.ctrlKey || event.metaKey) {
+				canvas.zoomBy(-dy / 300);
+				return;
+			}
+			if (event.shiftKey && dx === 0) [dx, dy] = [dy, 0];
+			canvas.panBy(dx / canvas.scale, dy / canvas.scale);
+		};
+		cachedInputTarget.addEventListener("wheel", wheelHandler, { passive: false });
 
 		// Measure immediately in case existing content already overflows
 		onContentChange();
@@ -186,6 +202,9 @@ export function registerAutoResize(
 		if (keydownHandler && cachedInputTarget) {
 			cachedInputTarget.removeEventListener("keydown", keydownHandler, true);
 		}
+		if (wheelHandler && cachedInputTarget) {
+			cachedInputTarget.removeEventListener("wheel", wheelHandler);
+		}
 		cachedScroller?.classList.remove("cammvas-editor-scroller");
 
 		// Reset state
@@ -193,6 +212,7 @@ export function registerAutoResize(
 		observer = null;
 		inputHandler = null;
 		keydownHandler = null;
+		wheelHandler = null;
 		cachedCmContent = null;
 		cachedScroller = null;
 		cachedInputTarget = null;

@@ -158,6 +158,10 @@ export interface Canvas {
 	getSelectionData(): { nodes: unknown[]; edges: unknown[] };
 
 	zoomToSelection(): void;
+	/** Current zoom as a linear factor (2^zoom). */
+	scale: number;
+	panBy(dx: number, dy: number): void;
+	zoomBy(delta: number, pos?: { x: number; y: number }): void;
 	zoomToBbox(bbox: {
 		minX: number;
 		minY: number;

@@ -23305,6 +23305,7 @@ function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKe
   let observer = null;
   let inputHandler = null;
   let keydownHandler = null;
+  let wheelHandler = null;
   let cachedCmContent = null;
   let cachedScroller = null;
   let cachedInputTarget = null;
@@ -23385,6 +23386,19 @@ function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKe
       if (event.key === "Enter") onTextChange == null ? void 0 : onTextChange(canvas, node);
     };
     cachedInputTarget.addEventListener("keydown", keydownHandler, true);
+    wheelHandler = (event) => {
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 800 : 1;
+      let dx = event.deltaX * unit;
+      let dy = event.deltaY * unit;
+      if (event.ctrlKey || event.metaKey) {
+        canvas.zoomBy(-dy / 300);
+        return;
+      }
+      if (event.shiftKey && dx === 0) [dx, dy] = [dy, 0];
+      canvas.panBy(dx / canvas.scale, dy / canvas.scale);
+    };
+    cachedInputTarget.addEventListener("wheel", wheelHandler, { passive: false });
     onContentChange();
     onTextChange == null ? void 0 : onTextChange(canvas, node);
   }
@@ -23399,11 +23413,15 @@ function registerAutoResize(canvas, config, onEditExit, onTextChange, onEditorKe
     if (keydownHandler && cachedInputTarget) {
       cachedInputTarget.removeEventListener("keydown", keydownHandler, true);
     }
+    if (wheelHandler && cachedInputTarget) {
+      cachedInputTarget.removeEventListener("wheel", wheelHandler);
+    }
     cachedScroller == null ? void 0 : cachedScroller.classList.remove("cammvas-editor-scroller");
     activeNode = null;
     observer = null;
     inputHandler = null;
     keydownHandler = null;
+    wheelHandler = null;
     cachedCmContent = null;
     cachedScroller = null;
     cachedInputTarget = null;
