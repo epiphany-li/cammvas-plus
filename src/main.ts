@@ -36,6 +36,7 @@ import { registerMobileEditingBar, MobileEditingBarHandle } from "./ui/mobile-ed
 import { computeOrderedListRenumberChanges } from "./ui/ordered-list-renumber";
 import { freemindToCanvas } from "./import/freemind-import";
 import { getGroupIds, buildForest, findTreeForNode } from "./mindmap/tree-model";
+import { collectCollapsedAncestorIds } from "./mindmap/reveal-path";
 import {
 	registerSummaries,
 	SummaryHandle,
@@ -550,6 +551,7 @@ export default class CanvasMindMapPlugin extends Plugin {
 				return;
 			}
 
+			this.revealNodePath(canvas, nodeId);
 			this.canvasApi.selectAndZoom(canvas, node, this.settings.navigationZoomPadding);
 		});
 
@@ -1303,11 +1305,26 @@ export default class CanvasMindMapPlugin extends Plugin {
 		}
 	}, 300);
 
+	/**
+	 * Make a node visible before navigating to it: expand every collapsed
+	 * branch above it (one save, one animated re-layout), the way XMind unfolds
+	 * the path to a located topic. Returns whether anything was expanded.
+	 */
+	revealNodePath(canvas: Canvas, nodeId: string): boolean {
+		const handle = this.branchCollapseHandle;
+		if (!handle || canvas !== this.interceptedCanvas) return false;
+		const tree = findTreeForNode(buildForest(canvas), nodeId);
+		if (!tree) return false;
+		const ids = collectCollapsedAncestorIds(tree, canvas.getData().mindmapCollapsed ?? []);
+		return ids.length > 0 && handle.expand(ids);
+	}
+
 	private refreshOutline(canvas: Canvas): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(OUTLINE_VIEW_TYPE)) {
 			const view = leaf.view;
 			if (view instanceof OutlineView) {
 				view.zoomPadding = this.settings.navigationZoomPadding;
+				view.revealNode = (c, nodeId) => this.revealNodePath(c, nodeId);
 				view.onForestLayout = (c, groupId) => {
 					this.layoutEngine.layoutForest(c, groupId);
 					this.updateGroupBounds(c);

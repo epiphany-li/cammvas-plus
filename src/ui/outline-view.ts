@@ -4,6 +4,8 @@ import { buildForest, TreeNode, getDescendants, getGroupIds, getNodeTitle, findT
 import { getSummaryRecords } from "../summary/summary-controller";
 import { copyText } from "./clipboard";
 import { tr } from "../i18n";
+import { findMatchSnippet, nodeSearchText, normalizeQuery } from "./outline-search";
+import { highlightTextInNode } from "./canvas-text-highlight";
 
 export const OUTLINE_VIEW_TYPE = "cammvas-plus-outline";
 
@@ -50,6 +52,15 @@ export class OutlineView extends ItemView {
 	private renderGeneration = 0;
 	zoomPadding = 0;
 	onForestLayout: ((canvas: Canvas, groupId: string) => void) | null = null;
+	/** Expands the collapsed branches above a node on the canvas; returns whether anything expanded. */
+	revealNode: ((canvas: Canvas, nodeId: string) => boolean) | null = null;
+	/** Node ids matching the current search, in outline order. */
+	private searchMatches: string[] = [];
+	private searchIndex = -1;
+	private appliedQuery = "";
+	private searchCountEl: HTMLElement | null = null;
+	private searchTextById = new Map<string, string>();
+	private clearCardHighlight: (() => void) | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -123,14 +134,22 @@ export class OutlineView extends ItemView {
 			this.searchQuery = value;
 			this.applyFilter();
 		});
+		this.searchCountEl = this.searchContainerEl.createDiv({ cls: "cammvas-outline-search-count" });
+		// Enter / Shift+Enter step through the hits (as in XMind); Escape closes the search.
+		this.searchComponent.inputEl.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				this.moveSearchMatch(e.shiftKey ? -1 : 1);
+			} else if (e.key === "Escape") {
+				e.preventDefault();
+				this.closeSearch();
+			}
+		});
 
 		searchBtn.addEventListener("click", () => {
 			if (!this.searchContainerEl || !this.searchComponent) return;
 			if (this.searchContainerEl.isShown()) {
-				this.searchContainerEl.hide();
-				this.searchQuery = "";
-				this.searchComponent.setValue("");
-				this.applyFilter();
+				this.closeSearch();
 			} else {
 				this.searchContainerEl.show();
 				this.searchComponent.inputEl.focus();
@@ -151,7 +170,18 @@ export class OutlineView extends ItemView {
 		this.collapseBtnEl = null;
 		this.searchContainerEl = null;
 		this.searchComponent = null;
+		this.searchCountEl = null;
+		this.clearCardHighlight?.();
+		this.clearCardHighlight = null;
 		return Promise.resolve();
+	}
+
+	private closeSearch(): void {
+		if (!this.searchContainerEl || !this.searchComponent) return;
+		this.searchContainerEl.hide();
+		this.searchQuery = "";
+		this.searchComponent.setValue("");
+		this.applyFilter();
 	}
 
 	/**
@@ -178,6 +208,7 @@ export class OutlineView extends ItemView {
 		}
 		this.lastCanvasCollapsed = canvasCollapsed;
 		this.nodeDataById = new Map(canvas.getData().nodes.map((node) => [node.id, node]));
+		this.searchTextById.clear();
 
 		// Store the canvas leaf for click navigation
 		this.canvasLeaf = this.app.workspace.getLeavesOfType("canvas")
@@ -303,28 +334,114 @@ export class OutlineView extends ItemView {
 		}
 	}
 
+	/**
+	 * Search the whole text of every card (not only the titles the outline
+	 * shows). Hits are highlighted with the matching line underneath, their
+	 * ancestors stay for context, and trees without hits are hidden (the
+	 * Workflowy/XMind outliner behaviour). Re-rendering with the same query
+	 * keeps the current hit.
+	 */
 	private applyFilter(): void {
-		const q = this.searchQuery.toLowerCase().trim();
+		const q = normalizeQuery(this.searchQuery);
 		this.contentEl.toggleClass("is-searching", q !== "");
+		const sameQuery = q === this.appliedQuery;
+		this.appliedQuery = q;
+		const current = sameQuery && this.searchIndex >= 0 ? this.searchMatches[this.searchIndex] : null;
+		if (!sameQuery) {
+			this.clearCardHighlight?.();
+			this.clearCardHighlight = null;
+		}
+		this.searchMatches = [];
+		this.searchIndex = -1;
 
-		for (const root of Array.from(this.contentEl.querySelectorAll<HTMLElement>(".cammvas-outline-root-tree"))) {
-			const text = root.textContent?.toLowerCase() ?? "";
-			root.toggleClass("is-hidden", q !== "" && !text.includes(q));
+		for (const el of Array.from(this.contentEl.querySelectorAll<HTMLElement>(".cammvas-outline-match-line"))) el.remove();
+		for (const el of Array.from(this.contentEl.querySelectorAll<HTMLElement>(".cammvas-outline-match, .cammvas-outline-current-match"))) {
+			el.removeClass("cammvas-outline-match", "cammvas-outline-current-match");
+		}
+		for (const item of Array.from(this.contentEl.querySelectorAll<HTMLElement>(".tree-item"))) item.removeClass("is-hidden");
+		if (q === "") {
+			this.updateSearchCount();
+			return;
 		}
 
+		for (const [nodeId, self] of this.allItemEls) {
+			const snippet = findMatchSnippet(this.searchText(nodeId), q);
+			if (!snippet) continue;
+			this.searchMatches.push(nodeId);
+			self.addClass("cammvas-outline-match");
+			// Created inside the row for typing, then moved right after it (a flex row must not hold a block line).
+			const line = self.createDiv({ cls: "cammvas-outline-match-line" });
+			line.appendText(snippet.line.slice(0, snippet.start));
+			line.createSpan({ cls: "cammvas-outline-match-mark", text: snippet.line.slice(snippet.start, snippet.start + snippet.length) });
+			line.appendText(snippet.line.slice(snippet.start + snippet.length));
+			self.insertAdjacentElement("afterend", line);
+		}
+
+		// Hide trees without a hit; ancestors of a hit stay visible for context.
+		for (const item of Array.from(this.contentEl.querySelectorAll<HTMLElement>(".tree-item"))) {
+			item.toggleClass("is-hidden", item.querySelector(".cammvas-outline-match") === null);
+		}
+		// A group whose own label matches shows everything in it.
 		for (const group of Array.from(this.contentEl.querySelectorAll<HTMLElement>(":scope > .tree-item"))) {
 			const header = group.querySelector<HTMLElement>(":scope > .cammvas-outline-group");
 			if (!header) continue;
 			const groupLabel = header.querySelector(".tree-item-inner span")?.textContent?.toLowerCase() ?? "";
-			const groupLabelMatches = q !== "" && groupLabel.includes(q);
-			if (groupLabelMatches) {
-				for (const root of Array.from(group.querySelectorAll<HTMLElement>(".cammvas-outline-root-tree"))) {
-					root.removeClass("is-hidden");
-				}
-			}
-			const matches = groupLabelMatches || (group.textContent?.toLowerCase() ?? "").includes(q);
-			group.toggleClass("is-hidden", q !== "" && !matches);
+			if (!groupLabel.includes(q)) continue;
+			group.removeClass("is-hidden");
+			for (const item of Array.from(group.querySelectorAll<HTMLElement>(".tree-item"))) item.removeClass("is-hidden");
 		}
+
+		if (current) {
+			this.searchIndex = this.searchMatches.indexOf(current);
+			if (this.searchIndex >= 0) this.allItemEls.get(current)?.addClass("cammvas-outline-current-match");
+		}
+		this.updateSearchCount();
+	}
+
+	private searchText(nodeId: string): string {
+		let text = this.searchTextById.get(nodeId);
+		if (text === undefined) {
+			const data = this.nodeDataById.get(nodeId);
+			const node = this.lastCanvas?.nodes.get(nodeId);
+			text = nodeSearchText(data, node ? getNodeTitle(node, data) : "");
+			this.searchTextById.set(nodeId, text);
+		}
+		return text;
+	}
+
+	/** Step to the next / previous hit and show it on the canvas; focus stays in the search box. */
+	private moveSearchMatch(direction: 1 | -1): void {
+		const canvas = this.lastCanvas;
+		const total = this.searchMatches.length;
+		if (!canvas || total === 0) return;
+		this.searchIndex = (this.searchIndex + direction + total) % total;
+		const nodeId = this.searchMatches[this.searchIndex];
+		for (const el of Array.from(this.contentEl.querySelectorAll<HTMLElement>(".cammvas-outline-current-match"))) {
+			el.removeClass("cammvas-outline-current-match");
+		}
+		const self = this.allItemEls.get(nodeId);
+		self?.addClass("cammvas-outline-current-match");
+		self?.scrollIntoView({ block: "nearest" });
+		this.updateSearchCount();
+		const node = canvas.nodes.get(nodeId);
+		if (!node) return;
+		this.navigateToNode(canvas, node, false);
+		this.clearCardHighlight?.();
+		this.clearCardHighlight = highlightTextInNode(node, this.appliedQuery, this.contentEl.win);
+	}
+
+	private updateSearchCount(): void {
+		if (!this.searchCountEl) return;
+		if (this.appliedQuery === "") {
+			this.searchCountEl.setText("");
+			return;
+		}
+		const total = this.searchMatches.length;
+		this.searchCountEl.setText(
+			total === 0
+				? tr("No matches", "无结果")
+				: `${this.searchIndex >= 0 ? this.searchIndex + 1 : "–"} / ${total}`
+		);
 	}
 
 	/**
@@ -411,22 +528,7 @@ export class OutlineView extends ItemView {
 				return;
 			}
 
-			this.clearSelection();
-			this.setActiveItem(root.canvasNode.id);
-			if (this.canvasLeaf) {
-				this.app.workspace.setActiveLeaf(this.canvasLeaf, { focus: true });
-			}
-			const node = root.canvasNode;
-			canvas.selectOnly(node);
-			const pad = this.zoomPadding;
-			const cx = node.x + node.width / 2;
-			const cy = node.y + node.height / 2;
-			canvas.zoomToBbox({
-				minX: cx - pad,
-				minY: cy - pad,
-				maxX: cx + pad,
-				maxY: cy + pad,
-			});
+			this.navigateToNode(canvas, root.canvasNode);
 		});
 
 		self.addEventListener("contextmenu", (e) => {
@@ -552,12 +654,20 @@ export class OutlineView extends ItemView {
 		}
 	}
 
-	private navigateToNode(canvas: Canvas, node: CanvasNode): void {
+	private navigateToNode(canvas: Canvas, node: CanvasNode, focusCanvas = true): void {
 		this.clearSelection();
 		this.setActiveItem(node.id);
-		if (this.canvasLeaf) {
+		if (focusCanvas && this.canvasLeaf) {
 			this.app.workspace.setActiveLeaf(this.canvasLeaf, { focus: true });
+		} else if (this.canvasLeaf) {
+			// Stepping through search hits: bring the canvas tab into view but
+			// leave the keyboard in the search box.
+			void this.app.workspace.revealLeaf(this.canvasLeaf);
 		}
+		// Under a collapsed branch the node is display:none on the canvas. Open
+		// its path first (XMind unfolds the path to a located topic), then zoom
+		// to where the re-layout put it.
+		this.revealNode?.(canvas, node.id);
 		canvas.selectOnly(node);
 		const cx = node.x + node.width / 2;
 		const cy = node.y + node.height / 2;
@@ -923,6 +1033,13 @@ export class OutlineView extends ItemView {
 		this.activeNodeId = null;
 		this.draggedRoot = null;
 		this.dragSourceGroupId = null;
+		this.searchMatches = [];
+		this.searchIndex = -1;
+		this.appliedQuery = "";
+		this.searchTextById.clear();
+		this.clearCardHighlight?.();
+		this.clearCardHighlight = null;
+		this.updateSearchCount();
 		this.contentEl.empty();
 		this.contentEl.createDiv({
 			cls: "cammvas-outline-empty",

@@ -526,3 +526,41 @@
 		transition: none;
 	}
 }
+
+/* Outline search: hits, the matching line under each hit, the counter, and
+   the hit words inside the card after a jump (CSS Custom Highlight API). */
+.cammvas-outline .cammvas-outline-item.cammvas-outline-match > .tree-item-inner {
+	font-weight: var(--font-semibold);
+}
+
+.cammvas-outline .cammvas-outline-item.cammvas-outline-current-match {
+	background-color: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+	box-shadow: inset 2px 0 0 var(--interactive-accent);
+}
+
+.cammvas-outline .cammvas-outline-match-line {
+	padding: 0 8px 4px 28px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.cammvas-outline .cammvas-outline-match-mark {
+	background-color: var(--text-highlight-bg);
+	color: var(--text-normal);
+	border-radius: 2px;
+}
+
+.cammvas-outline-search-count {
+	padding: 2px 4px 0;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	min-height: 1em;
+}
+
+::highlight(cammvas-search) {
+	background-color: var(--text-highlight-bg);
+}

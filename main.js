@@ -5769,6 +5769,19 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
     refresh();
     onToggled == null ? void 0 : onToggled(nodeId);
   };
+  const expand = (nodeIds) => {
+    var _a;
+    const collapsed = new Set((_a = canvas.getData().mindmapCollapsed) != null ? _a : []);
+    let last2 = null;
+    for (const nodeId of nodeIds) {
+      if (collapsed.delete(nodeId)) last2 = nodeId;
+    }
+    if (last2 === null) return false;
+    writeCanvasDataKey(canvas, "mindmapCollapsed", [...collapsed]);
+    refresh();
+    onToggled == null ? void 0 : onToggled(last2);
+    return true;
+  };
   const syncButton = (node, collapsed, descendantCount, side) => {
     let button = node.nodeEl.querySelector(`:scope > .${BUTTON_CLASS}`);
     if (!button) {
@@ -5870,6 +5883,7 @@ function registerBranchCollapse(canvas, canvasApi, onToggled) {
   return {
     refresh: scheduleRefresh,
     toggle,
+    expand,
     canToggle: (nodeId) => canvasApi.getOutgoingEdges(canvas, nodeId).length > 0,
     cleanup: (keepVisuals = false) => {
       disposed = true;
@@ -23859,6 +23873,96 @@ async function copyText(win, text, successMessage) {
   }
 }
 
+// src/ui/outline-search.ts
+function normalizeQuery(raw) {
+  return raw.trim().toLowerCase();
+}
+function nodeSearchText(data, fallback) {
+  const parts = [data == null ? void 0 : data.text, data == null ? void 0 : data.file, data == null ? void 0 : data.url, data == null ? void 0 : data.label].filter(
+    (part) => typeof part === "string" && part.trim() !== ""
+  );
+  return parts.length > 0 ? parts.join("\n") : fallback;
+}
+var LINE_PREFIX = /^(?:\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?|\s*#{1,6}\s+|\s*>\s*|\s*\|\s*)+/;
+function findMatchSnippet(text, query, maxLength = 80) {
+  var _a, _b;
+  const q = normalizeQuery(query);
+  if (q === "") return null;
+  const lower = text.toLowerCase();
+  const hit = lower.indexOf(q);
+  if (hit < 0) return null;
+  const lineStart = lower.lastIndexOf("\n", hit) + 1;
+  const lineEndRaw = lower.indexOf("\n", hit);
+  const lineEnd = lineEndRaw < 0 ? text.length : lineEndRaw;
+  let line = text.slice(lineStart, lineEnd).replace(/\s+$/, "");
+  let start = hit - lineStart;
+  const prefix = (_b = (_a = LINE_PREFIX.exec(line)) == null ? void 0 : _a[0]) != null ? _b : "";
+  if (prefix.length <= start) {
+    line = line.slice(prefix.length);
+    start -= prefix.length;
+  }
+  if (line.length > maxLength) {
+    const lead = Math.max(0, Math.min(start - Math.floor(maxLength / 4), line.length - maxLength));
+    const cut = line.slice(lead, lead + maxLength);
+    const before = lead > 0 ? "\u2026" : "";
+    const after = lead + maxLength < line.length ? "\u2026" : "";
+    line = before + cut + after;
+    start = start - lead + before.length;
+  }
+  return { line, start, length: q.length };
+}
+
+// src/ui/canvas-text-highlight.ts
+var HIGHLIGHT_NAME = "cammvas-search";
+var SHOW_TEXT = 4;
+function highlightTextInNode(node, query, win) {
+  var _a;
+  const api = win;
+  const registry = (_a = api.CSS) == null ? void 0 : _a.highlights;
+  const HighlightCtor = api.Highlight;
+  if (query === "" || !registry || !HighlightCtor) return () => void 0;
+  const highlight = new HighlightCtor();
+  registry.set(HIGHLIGHT_NAME, highlight);
+  let frame = null;
+  const paint = () => {
+    var _a2;
+    frame = null;
+    highlight.clear();
+    for (const range2 of collectRanges((_a2 = node.contentEl) != null ? _a2 : node.nodeEl, query)) highlight.add(range2);
+  };
+  const schedule = () => {
+    if (frame === null) frame = win.requestAnimationFrame(paint);
+  };
+  const Observer = Reflect.get(win, "MutationObserver");
+  const observer = new Observer(schedule);
+  observer.observe(node.nodeEl, { childList: true, subtree: true, characterData: true });
+  paint();
+  return () => {
+    observer.disconnect();
+    if (frame !== null) win.cancelAnimationFrame(frame);
+    frame = null;
+    registry.delete(HIGHLIGHT_NAME);
+  };
+}
+function collectRanges(root, query) {
+  var _a;
+  const ranges = [];
+  if (!root) return ranges;
+  const doc = root.ownerDocument;
+  const walker = doc.createTreeWalker(root, SHOW_TEXT);
+  const q = query.toLowerCase();
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    const value = ((_a = text.nodeValue) != null ? _a : "").toLowerCase();
+    for (let i3 = value.indexOf(q); i3 >= 0; i3 = value.indexOf(q, i3 + q.length)) {
+      const range2 = doc.createRange();
+      range2.setStart(text, i3);
+      range2.setEnd(text, i3 + q.length);
+      ranges.push(range2);
+    }
+  }
+  return ranges;
+}
+
 // src/ui/outline-view.ts
 var OUTLINE_VIEW_TYPE = "cammvas-plus-outline";
 var OutlineView = class extends import_obsidian9.ItemView {
@@ -23896,6 +24000,15 @@ var OutlineView = class extends import_obsidian9.ItemView {
     this.renderGeneration = 0;
     this.zoomPadding = 0;
     this.onForestLayout = null;
+    /** Expands the collapsed branches above a node on the canvas; returns whether anything expanded. */
+    this.revealNode = null;
+    /** Node ids matching the current search, in outline order. */
+    this.searchMatches = [];
+    this.searchIndex = -1;
+    this.appliedQuery = "";
+    this.searchCountEl = null;
+    this.searchTextById = /* @__PURE__ */ new Map();
+    this.clearCardHighlight = null;
   }
   getViewType() {
     return OUTLINE_VIEW_TYPE;
@@ -23949,13 +24062,20 @@ var OutlineView = class extends import_obsidian9.ItemView {
       this.searchQuery = value;
       this.applyFilter();
     });
+    this.searchCountEl = this.searchContainerEl.createDiv({ cls: "cammvas-outline-search-count" });
+    this.searchComponent.inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.moveSearchMatch(e.shiftKey ? -1 : 1);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        this.closeSearch();
+      }
+    });
     searchBtn.addEventListener("click", () => {
       if (!this.searchContainerEl || !this.searchComponent) return;
       if (this.searchContainerEl.isShown()) {
-        this.searchContainerEl.hide();
-        this.searchQuery = "";
-        this.searchComponent.setValue("");
-        this.applyFilter();
+        this.closeSearch();
       } else {
         this.searchContainerEl.show();
         this.searchComponent.inputEl.focus();
@@ -23964,7 +24084,7 @@ var OutlineView = class extends import_obsidian9.ItemView {
     return Promise.resolve();
   }
   onClose() {
-    var _a;
+    var _a, _b;
     this.clear();
     (_a = this.clearDragPermissionListeners) == null ? void 0 : _a.call(this);
     this.clearDragPermissionListeners = null;
@@ -23975,7 +24095,17 @@ var OutlineView = class extends import_obsidian9.ItemView {
     this.collapseBtnEl = null;
     this.searchContainerEl = null;
     this.searchComponent = null;
+    this.searchCountEl = null;
+    (_b = this.clearCardHighlight) == null ? void 0 : _b.call(this);
+    this.clearCardHighlight = null;
     return Promise.resolve();
+  }
+  closeSearch() {
+    if (!this.searchContainerEl || !this.searchComponent) return;
+    this.searchContainerEl.hide();
+    this.searchQuery = "";
+    this.searchComponent.setValue("");
+    this.applyFilter();
   }
   /**
    * Rebuild the outline from the current canvas state.
@@ -24001,6 +24131,7 @@ var OutlineView = class extends import_obsidian9.ItemView {
     }
     this.lastCanvasCollapsed = canvasCollapsed;
     this.nodeDataById = new Map(canvas.getData().nodes.map((node) => [node.id, node]));
+    this.searchTextById.clear();
     this.canvasLeaf = (_b = this.app.workspace.getLeavesOfType("canvas").find((l) => {
       var _a2;
       return ((_a2 = l.view) == null ? void 0 : _a2.canvas) === canvas;
@@ -24098,27 +24229,105 @@ var OutlineView = class extends import_obsidian9.ItemView {
       if (el) el.addClass("is-active");
     }
   }
+  /**
+   * Search the whole text of every card (not only the titles the outline
+   * shows). Hits are highlighted with the matching line underneath, their
+   * ancestors stay for context, and trees without hits are hidden (the
+   * Workflowy/XMind outliner behaviour). Re-rendering with the same query
+   * keeps the current hit.
+   */
   applyFilter() {
-    var _a, _b, _c, _d, _e, _f, _g;
-    const q = this.searchQuery.toLowerCase().trim();
+    var _a, _b, _c, _d, _e;
+    const q = normalizeQuery(this.searchQuery);
     this.contentEl.toggleClass("is-searching", q !== "");
-    for (const root of Array.from(this.contentEl.querySelectorAll(".cammvas-outline-root-tree"))) {
-      const text = (_b = (_a = root.textContent) == null ? void 0 : _a.toLowerCase()) != null ? _b : "";
-      root.toggleClass("is-hidden", q !== "" && !text.includes(q));
+    const sameQuery = q === this.appliedQuery;
+    this.appliedQuery = q;
+    const current = sameQuery && this.searchIndex >= 0 ? this.searchMatches[this.searchIndex] : null;
+    if (!sameQuery) {
+      (_a = this.clearCardHighlight) == null ? void 0 : _a.call(this);
+      this.clearCardHighlight = null;
+    }
+    this.searchMatches = [];
+    this.searchIndex = -1;
+    for (const el of Array.from(this.contentEl.querySelectorAll(".cammvas-outline-match-line"))) el.remove();
+    for (const el of Array.from(this.contentEl.querySelectorAll(".cammvas-outline-match, .cammvas-outline-current-match"))) {
+      el.removeClass("cammvas-outline-match", "cammvas-outline-current-match");
+    }
+    for (const item of Array.from(this.contentEl.querySelectorAll(".tree-item"))) item.removeClass("is-hidden");
+    if (q === "") {
+      this.updateSearchCount();
+      return;
+    }
+    for (const [nodeId, self] of this.allItemEls) {
+      const snippet = findMatchSnippet(this.searchText(nodeId), q);
+      if (!snippet) continue;
+      this.searchMatches.push(nodeId);
+      self.addClass("cammvas-outline-match");
+      const line = self.createDiv({ cls: "cammvas-outline-match-line" });
+      line.appendText(snippet.line.slice(0, snippet.start));
+      line.createSpan({ cls: "cammvas-outline-match-mark", text: snippet.line.slice(snippet.start, snippet.start + snippet.length) });
+      line.appendText(snippet.line.slice(snippet.start + snippet.length));
+      self.insertAdjacentElement("afterend", line);
+    }
+    for (const item of Array.from(this.contentEl.querySelectorAll(".tree-item"))) {
+      item.toggleClass("is-hidden", item.querySelector(".cammvas-outline-match") === null);
     }
     for (const group of Array.from(this.contentEl.querySelectorAll(":scope > .tree-item"))) {
       const header = group.querySelector(":scope > .cammvas-outline-group");
       if (!header) continue;
-      const groupLabel = (_e = (_d = (_c = header.querySelector(".tree-item-inner span")) == null ? void 0 : _c.textContent) == null ? void 0 : _d.toLowerCase()) != null ? _e : "";
-      const groupLabelMatches = q !== "" && groupLabel.includes(q);
-      if (groupLabelMatches) {
-        for (const root of Array.from(group.querySelectorAll(".cammvas-outline-root-tree"))) {
-          root.removeClass("is-hidden");
-        }
-      }
-      const matches = groupLabelMatches || ((_g = (_f = group.textContent) == null ? void 0 : _f.toLowerCase()) != null ? _g : "").includes(q);
-      group.toggleClass("is-hidden", q !== "" && !matches);
+      const groupLabel = (_d = (_c = (_b = header.querySelector(".tree-item-inner span")) == null ? void 0 : _b.textContent) == null ? void 0 : _c.toLowerCase()) != null ? _d : "";
+      if (!groupLabel.includes(q)) continue;
+      group.removeClass("is-hidden");
+      for (const item of Array.from(group.querySelectorAll(".tree-item"))) item.removeClass("is-hidden");
     }
+    if (current) {
+      this.searchIndex = this.searchMatches.indexOf(current);
+      if (this.searchIndex >= 0) (_e = this.allItemEls.get(current)) == null ? void 0 : _e.addClass("cammvas-outline-current-match");
+    }
+    this.updateSearchCount();
+  }
+  searchText(nodeId) {
+    var _a;
+    let text = this.searchTextById.get(nodeId);
+    if (text === void 0) {
+      const data = this.nodeDataById.get(nodeId);
+      const node = (_a = this.lastCanvas) == null ? void 0 : _a.nodes.get(nodeId);
+      text = nodeSearchText(data, node ? getNodeTitle(node, data) : "");
+      this.searchTextById.set(nodeId, text);
+    }
+    return text;
+  }
+  /** Step to the next / previous hit and show it on the canvas; focus stays in the search box. */
+  moveSearchMatch(direction) {
+    var _a;
+    const canvas = this.lastCanvas;
+    const total = this.searchMatches.length;
+    if (!canvas || total === 0) return;
+    this.searchIndex = (this.searchIndex + direction + total) % total;
+    const nodeId = this.searchMatches[this.searchIndex];
+    for (const el of Array.from(this.contentEl.querySelectorAll(".cammvas-outline-current-match"))) {
+      el.removeClass("cammvas-outline-current-match");
+    }
+    const self = this.allItemEls.get(nodeId);
+    self == null ? void 0 : self.addClass("cammvas-outline-current-match");
+    self == null ? void 0 : self.scrollIntoView({ block: "nearest" });
+    this.updateSearchCount();
+    const node = canvas.nodes.get(nodeId);
+    if (!node) return;
+    this.navigateToNode(canvas, node, false);
+    (_a = this.clearCardHighlight) == null ? void 0 : _a.call(this);
+    this.clearCardHighlight = highlightTextInNode(node, this.appliedQuery, this.contentEl.win);
+  }
+  updateSearchCount() {
+    if (!this.searchCountEl) return;
+    if (this.appliedQuery === "") {
+      this.searchCountEl.setText("");
+      return;
+    }
+    const total = this.searchMatches.length;
+    this.searchCountEl.setText(
+      total === 0 ? tr("No matches", "\u65E0\u7ED3\u679C") : `${this.searchIndex >= 0 ? this.searchIndex + 1 : "\u2013"} / ${total}`
+    );
   }
   /**
    * Render a single root node as a tree-item.
@@ -24192,22 +24401,7 @@ var OutlineView = class extends import_obsidian9.ItemView {
         }
         return;
       }
-      this.clearSelection();
-      this.setActiveItem(root.canvasNode.id);
-      if (this.canvasLeaf) {
-        this.app.workspace.setActiveLeaf(this.canvasLeaf, { focus: true });
-      }
-      const node = root.canvasNode;
-      canvas.selectOnly(node);
-      const pad = this.zoomPadding;
-      const cx2 = node.x + node.width / 2;
-      const cy2 = node.y + node.height / 2;
-      canvas.zoomToBbox({
-        minX: cx2 - pad,
-        minY: cy2 - pad,
-        maxX: cx2 + pad,
-        maxY: cy2 + pad
-      });
+      this.navigateToNode(canvas, root.canvasNode);
     });
     self.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -24318,12 +24512,16 @@ var OutlineView = class extends import_obsidian9.ItemView {
       treeItem.addClass("is-collapsed");
     }
   }
-  navigateToNode(canvas, node) {
+  navigateToNode(canvas, node, focusCanvas = true) {
+    var _a;
     this.clearSelection();
     this.setActiveItem(node.id);
-    if (this.canvasLeaf) {
+    if (focusCanvas && this.canvasLeaf) {
       this.app.workspace.setActiveLeaf(this.canvasLeaf, { focus: true });
+    } else if (this.canvasLeaf) {
+      void this.app.workspace.revealLeaf(this.canvasLeaf);
     }
+    (_a = this.revealNode) == null ? void 0 : _a.call(this, canvas, node.id);
     canvas.selectOnly(node);
     const cx2 = node.x + node.width / 2;
     const cy2 = node.y + node.height / 2;
@@ -24617,6 +24815,7 @@ var OutlineView = class extends import_obsidian9.ItemView {
    * Clear the outline (no canvas active).
    */
   clear() {
+    var _a;
     this.renderGeneration++;
     this.clearDragPermission();
     this.canvasLeaf = null;
@@ -24630,6 +24829,13 @@ var OutlineView = class extends import_obsidian9.ItemView {
     this.activeNodeId = null;
     this.draggedRoot = null;
     this.dragSourceGroupId = null;
+    this.searchMatches = [];
+    this.searchIndex = -1;
+    this.appliedQuery = "";
+    this.searchTextById.clear();
+    (_a = this.clearCardHighlight) == null ? void 0 : _a.call(this);
+    this.clearCardHighlight = null;
+    this.updateSearchCount();
     this.contentEl.empty();
     this.contentEl.createDiv({
       cls: "cammvas-outline-empty",
@@ -25013,6 +25219,20 @@ function freemindToCanvas(xml, opts) {
     currentY += height + treeGap;
   }
   return { nodes, edges, mindmap: true };
+}
+
+// src/mindmap/reveal-path.ts
+function collectCollapsedAncestorIds(node, collapsedIds) {
+  const collapsed = new Set(collapsedIds);
+  const result = [];
+  const seen = /* @__PURE__ */ new Set([node.canvasNode.id]);
+  let current = node.parent;
+  while (current && !seen.has(current.canvasNode.id)) {
+    seen.add(current.canvasNode.id);
+    if (collapsed.has(current.canvasNode.id)) result.push(current.canvasNode.id);
+    current = current.parent;
+  }
+  return result;
 }
 
 // src/main.ts
@@ -25431,6 +25651,7 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
         new import_obsidian11.Notice(tr("Target node not found", "\u627E\u4E0D\u5230\u76EE\u6807\u8282\u70B9"));
         return;
       }
+      this.revealNodePath(canvas, nodeId);
       this.canvasApi.selectAndZoom(canvas, node, this.settings.navigationZoomPadding);
     });
     this.addCommand({
@@ -26071,11 +26292,26 @@ var CanvasMindMapPlugin = class extends import_obsidian11.Plugin {
       this.hideOutline();
     }
   }
+  /**
+   * Make a node visible before navigating to it: expand every collapsed
+   * branch above it (one save, one animated re-layout), the way XMind unfolds
+   * the path to a located topic. Returns whether anything was expanded.
+   */
+  revealNodePath(canvas, nodeId) {
+    var _a;
+    const handle = this.branchCollapseHandle;
+    if (!handle || canvas !== this.interceptedCanvas) return false;
+    const tree = findTreeForNode(buildForest(canvas), nodeId);
+    if (!tree) return false;
+    const ids = collectCollapsedAncestorIds(tree, (_a = canvas.getData().mindmapCollapsed) != null ? _a : []);
+    return ids.length > 0 && handle.expand(ids);
+  }
   refreshOutline(canvas) {
     for (const leaf of this.app.workspace.getLeavesOfType(OUTLINE_VIEW_TYPE)) {
       const view = leaf.view;
       if (view instanceof OutlineView) {
         view.zoomPadding = this.settings.navigationZoomPadding;
+        view.revealNode = (c, nodeId) => this.revealNodePath(c, nodeId);
         view.onForestLayout = (c, groupId) => {
           this.layoutEngine.layoutForest(c, groupId);
           this.updateGroupBounds(c);

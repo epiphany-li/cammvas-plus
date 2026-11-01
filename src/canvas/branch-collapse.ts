@@ -16,6 +16,12 @@ export interface BranchCollapseHandle {
 	refresh: () => void;
 	/** Collapse or expand the branch below a node. */
 	toggle: (nodeId: string) => void;
+	/**
+	 * Expand several collapsed branches in one go (one save, one re-layout),
+	 * e.g. the path above a node the user navigates to. Returns whether any
+	 * of them was collapsed.
+	 */
+	expand: (nodeIds: Iterable<string>) => boolean;
 	/** Whether the node has children that can be collapsed. */
 	canToggle: (nodeId: string) => boolean;
 	/**
@@ -102,6 +108,19 @@ export function registerBranchCollapse(
 		writeCanvasDataKey(canvas, "mindmapCollapsed", [...collapsed]);
 		refresh();
 		onToggled?.(nodeId);
+	};
+
+	const expand = (nodeIds: Iterable<string>): boolean => {
+		const collapsed = new Set(canvas.getData().mindmapCollapsed ?? []);
+		let last: string | null = null;
+		for (const nodeId of nodeIds) {
+			if (collapsed.delete(nodeId)) last = nodeId;
+		}
+		if (last === null) return false;
+		writeCanvasDataKey(canvas, "mindmapCollapsed", [...collapsed]);
+		refresh();
+		onToggled?.(last);
+		return true;
 	};
 
 	const syncButton = (
@@ -224,6 +243,7 @@ export function registerBranchCollapse(
 	return {
 		refresh: scheduleRefresh,
 		toggle,
+		expand,
 		canToggle: (nodeId) => canvasApi.getOutgoingEdges(canvas, nodeId).length > 0,
 		cleanup: (keepVisuals = false) => {
 			disposed = true;

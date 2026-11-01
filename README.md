@@ -56,6 +56,8 @@ Cammvas Plus assigns no default hotkeys. Useful commands to bind under **Setting
 
 **Map outline** — follows collapse state and lists each summary under its parent:
 
+Its search box looks through the whole text of every card, shows the matching line under each hit, and steps between hits with `Enter` / `Shift+Enter`. Clicking a hit (or any outline item) expands the collapsed branches above it on the canvas and zooms to it.
+
 ![The outline sidebar showing the tree, a collapsed Memory branch, and a summary tagged under Retrieval](./images/outline.png)
 
 ## Data Stored In Canvas Files
